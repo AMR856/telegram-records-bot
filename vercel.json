@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://telegram-records-bot-1017887c527f.herokuapp.com/api/:path*"
+    }
+  ]
+}
