@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Management Bot"
+    app_name: str = "Qayd"
 
     database_url: str = "postgresql+asyncpg://bot:bot@localhost:5432/management_bot"
 
@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     telegram_poll_timeout: int = 30
 
     telegram_poll_limit: int = Field(default=100, ge=1, le=100)
+
+    whatsapp_max_upload_mb: int = Field(default=40, ge=1, le=200)
 
     @property
     def cors_origin_list(self) -> list[str]:

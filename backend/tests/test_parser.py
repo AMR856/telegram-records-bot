@@ -65,7 +65,11 @@ class BasicParsingTests(ParserTestCase):
 
     def test_thousands_separator(self):
         self.assert_single(
-            "O�OU.US O�O�O� OU,O_USU+ 1,850 U?OO�U^O�Oc O'U�O� 10", 1850, "O�OU.US O�O�O� OU,O_USU+", "U?OO�U^O�Oc", 10
+            "عمرو محمد مهدي النص 1,850 فاتورة شهر 10",
+            1850,
+            "عمرو محمد مهدي النص",
+            "فاتورة",
+            10,
         )
 
     def test_large_thousands_separator(self):

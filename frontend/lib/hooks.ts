@@ -9,13 +9,17 @@ import {
 
 import { apiFetch, buildQuery } from "@/lib/api";
 import type {
+  DateOrder,
   Listener,
   ListenerPayload,
   LogFilters,
   LogPage,
+  ParserProfile,
+  PatternProfilePayload,
   PaymentFilters,
   PaymentPage,
   User,
+  WhatsAppParseResponse,
 } from "@/lib/types";
 
 export const queryKeys = {
@@ -25,6 +29,9 @@ export const queryKeys = {
   logs: (id: string, filters: LogFilters) => ["logs", id, filters] as const,
   payments: (id: string, filters: PaymentFilters, page: number) =>
     ["payments", id, filters, page] as const,
+  parserProfile: (listenerId: string) => ["parserProfile", listenerId] as const,
+  parserProfiles: ["parserProfiles"] as const,
+  whatsappProfiles: ["whatsappProfiles"] as const,
 };
 
 export function useMe() {
@@ -188,6 +195,169 @@ export function useDeleteListener(id: string) {
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: queryKeys.listener(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.listeners });
+    },
+  });
+}
+
+export function useParserProfile(listenerId: string) {
+  return useQuery({
+    queryKey: queryKeys.parserProfile(listenerId),
+    queryFn: () =>
+      apiFetch<ParserProfile | null>(`/api/listeners/${listenerId}/parser-profile`),
+    enabled: Boolean(listenerId),
+    staleTime: 30_000,
+  });
+}
+
+export function useParserProfiles() {
+  return useQuery({
+    queryKey: queryKeys.parserProfiles,
+    queryFn: () => apiFetch<ParserProfile[]>("/api/patterns/profiles"),
+    staleTime: 30_000,
+  });
+}
+
+export function useCopyParserProfile(listenerId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (profileId: string) =>
+      apiFetch<ParserProfile>(
+        `/api/listeners/${listenerId}/parser-profile/copy`,
+        {
+          method: "POST",
+          body: JSON.stringify({ profile_id: profileId }),
+        },
+      ),
+    onSuccess: (profile) => {
+      queryClient.setQueryData(queryKeys.parserProfile(listenerId), profile);
+      queryClient.invalidateQueries({ queryKey: queryKeys.parserProfiles });
+    },
+  });
+}
+
+export function useSaveParserProfile(listenerId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: PatternProfilePayload) =>
+      apiFetch<ParserProfile>(`/api/listeners/${listenerId}/parser-profile`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (profile) => {
+      queryClient.setQueryData(queryKeys.parserProfile(listenerId), profile);
+      queryClient.invalidateQueries({ queryKey: queryKeys.listeners });
+    },
+  });
+}
+
+export function useDeleteParserProfile(listenerId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<void>(`/api/listeners/${listenerId}/parser-profile`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.parserProfile(listenerId), null);
+    },
+  });
+}
+
+export function useWhatsappProfiles() {
+  return useQuery({
+    queryKey: queryKeys.whatsappProfiles,
+    queryFn: () => apiFetch<ParserProfile[]>("/api/whatsapp/profiles"),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateWhatsappProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: PatternProfilePayload) =>
+      apiFetch<ParserProfile>("/api/whatsapp/profiles", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.whatsappProfiles });
+    },
+  });
+}
+
+export function useUpdateWhatsappProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: PatternProfilePayload }) =>
+      apiFetch<ParserProfile>(`/api/whatsapp/profiles/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (profile) => {
+      queryClient.setQueryData<ParserProfile[]>(queryKeys.whatsappProfiles, (current) =>
+        current?.map((item) => (item.id === profile.id ? profile : item)),
+      );
+    },
+  });
+}
+
+export function useDeleteWhatsappProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<void>(`/api/whatsapp/profiles/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.whatsappProfiles });
+    },
+  });
+}
+
+export function useCopyWhatsappProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      profileId,
+      listenerId,
+      name,
+    }: {
+      profileId: string;
+      listenerId: string;
+      name?: string;
+    }) =>
+      apiFetch<ParserProfile>(
+        `/api/whatsapp/profiles/${profileId}/copy-from-listener/${listenerId}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name: name ?? null }),
+        },
+      ),
+    onSuccess: (profile) => {
+      queryClient.setQueryData<ParserProfile[]>(queryKeys.whatsappProfiles, (current) =>
+        current?.map((item) => (item.id === profile.id ? profile : item)),
+      );
+    },
+  });
+}
+
+export function useParseWhatsapp() {
+  return useMutation({
+    mutationFn: ({
+      profileId,
+      file,
+      dateOrder,
+    }: {
+      profileId: string;
+      file: File;
+      dateOrder?: DateOrder | null;
+    }) => {
+      const form = new FormData();
+      form.set("profile_id", profileId);
+      form.set("file", file);
+      if (dateOrder) form.set("date_order", dateOrder);
+      return apiFetch<WhatsAppParseResponse>("/api/whatsapp/parse", {
+        method: "POST",
+        body: form,
+      });
     },
   });
 }

@@ -7,8 +7,8 @@ import type { Lang } from "@/lib/i18n";
 import { getDictionary, isLang } from "@/lib/i18n";
 
 export const metadata: Metadata = {
-  title: "Payment Ledger",
-  description: "Track Telegram payments and export them to Excel.",
+  title: "Qayd",
+  description: "Track Telegram and WhatsApp payments and export them to Excel.",
 };
 
 export default async function RootLayout({

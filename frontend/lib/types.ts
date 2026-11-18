@@ -58,6 +58,7 @@ export type Payment = {
   description: string | null;
   month: number;
   source: string;
+  extra: Record<string, string> | null;
   received_at: string;
   message_date: string | null;
 };
@@ -87,4 +88,100 @@ export type ListenerPayload = {
   label?: string | null;
   channel_input?: string;
   bot_token?: string;
+};
+
+export type PatternType = "number" | "text" | "word" | "month";
+
+export type PatternField = {
+  placeholder: string;
+  target: string;
+  type: PatternType;
+  required: boolean;
+};
+
+export type PatternDefinition = {
+  name: string;
+  template: string;
+  fields: PatternField[];
+  defaults: Record<string, string>;
+  enabled: boolean;
+};
+
+export type ExportColumnSource = "field" | "custom" | "constant";
+
+export type ExportColumn = {
+  key: string;
+  header: string;
+  source: ExportColumnSource;
+  field: string | null;
+  default: string | null;
+};
+
+export type ParserProfile = {
+  id: string;
+  listener_id: string | null;
+  kind: "telegram" | "whatsapp";
+  name: string;
+  patterns: PatternDefinition[];
+  export_columns: ExportColumn[];
+  fallback_to_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PatternProfilePayload = {
+  name: string;
+  patterns: PatternDefinition[];
+  export_columns: ExportColumn[];
+  fallback_to_default: boolean;
+};
+
+export type PatternPreviewRow = {
+  value: number;
+  name: string;
+  description: string;
+  month: number;
+  source: string;
+  currency: PaymentCurrency;
+  kind: PaymentKind;
+  extra: Record<string, string>;
+  cells: string[];
+};
+
+export type PatternPreviewResponse = {
+  rows: PatternPreviewRow[];
+  unmatched_lines: string[];
+  errors: string[];
+  columns: ExportColumn[];
+};
+
+export type DateOrder = "dmy" | "mdy";
+
+export type WhatsAppRow = {
+  date: string | null;
+  sender: string;
+  raw: string;
+  value: number | null;
+  name: string;
+  description: string;
+  month: number | null;
+  source: string;
+  currency: PaymentCurrency;
+  kind: PaymentKind;
+  extra: Record<string, string>;
+  cells: string[];
+};
+
+export type WhatsAppParseResponse = {
+  rows: WhatsAppRow[];
+  columns: ExportColumn[];
+  message_count: number;
+  row_count: number;
+  unmatched_messages: number;
+  date_order: DateOrder;
+  date_order_ambiguous: boolean;
+  total_syp: number;
+  total_usd: number;
+  senders: string[];
+  errors: string[];
 };

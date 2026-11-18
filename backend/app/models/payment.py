@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     DateTime,
     ForeignKey,
@@ -87,6 +88,9 @@ class Payment(Base):
 
     # Distinguishes regular payments from money returned to the customer (refunds).
     kind: Mapped[str] = mapped_column(String(16), default="payment", server_default="payment")
+
+    # Extra values captured by user-defined patterns for custom Excel columns.
+    extra: Mapped[dict | None] = mapped_column(JSON)
 
     # SQLAlchemy ORM relationship linking this payment back to its parent BotListener instance.
     listener: Mapped["BotListener"] = relationship(back_populates="payments")  # noqa: F821

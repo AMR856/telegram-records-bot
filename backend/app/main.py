@@ -4,7 +4,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import admin, auth, health, listeners, logs, payments
+from app.api.routers import (
+    admin,
+    auth,
+    health,
+    listeners,
+    logs,
+    patterns,
+    payments,
+    whatsapp,
+)
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
 from app.services.poller import PollerManager
@@ -33,7 +42,7 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
 
 
-app = FastAPI(title="Management Bot API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Qayd API", version="1.0.0", lifespan=lifespan)
 
 settings = get_settings()
 app.add_middleware(
@@ -49,6 +58,9 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(listeners.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
 app.include_router(payments.router, prefix="/api")
+app.include_router(patterns.router, prefix="/api")
+app.include_router(patterns.preview_router, prefix="/api")
+app.include_router(whatsapp.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 
 

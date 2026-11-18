@@ -16,6 +16,7 @@ import {
 } from "@/components/Icons";
 import { ListenerFormModal } from "@/components/ListenerFormModal";
 import { LogsPanel } from "@/components/LogsPanel";
+import { ListenerPatternsPanel } from "@/components/patterns/ListenerPatternsPanel";
 import { PaymentsPanel } from "@/components/PaymentsPanel";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
@@ -31,7 +32,7 @@ import {
 } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n-context";
 
-type Tab = "logs" | "payments";
+type Tab = "logs" | "payments" | "patterns";
 
 export function ListenerDetail({ id }: { id: string }) {
   const { dict, lang } = useI18n();
@@ -246,6 +247,7 @@ export function ListenerDetail({ id }: { id: string }) {
           [
             { id: "logs" as const, label: dict.logs },
             { id: "payments" as const, label: dict.payments },
+            { id: "patterns" as const, label: dict.patternsTitle },
           ]
         ).map((item) => (
           <button
@@ -267,8 +269,10 @@ export function ListenerDetail({ id }: { id: string }) {
       <div className="mt-4">
         {tab === "logs" ? (
           <LogsPanel listenerId={listener.id} running={isRunning} />
-        ) : (
+        ) : tab === "payments" ? (
           <PaymentsPanel listenerId={listener.id} running={isRunning} />
+        ) : (
+          <ListenerPatternsPanel listenerId={listener.id} />
         )}
       </div>
 

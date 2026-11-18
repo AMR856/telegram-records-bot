@@ -14,9 +14,16 @@ from app.core.config import Settings
 from app.core.security import decrypt_token
 from app.models.listener import BotListener, ListenerStatus
 from app.models.log import ListenerLog, LogKind, LogLevel
+from app.models.parser_profile import ParserProfile
 from app.models.payment import Payment
 from app.models.user import User
 from app.services.parser import MessageParser
+from app.services.pattern_engine import (
+    CompiledPattern,
+    PatternError,
+    compile_patterns,
+    parse_compiled_lines,
+)
 from app.services.telegram import TelegramClient, TelegramError
 
 logger = logging.getLogger(__name__)
@@ -60,6 +67,9 @@ class Runtime:
     client: TelegramClient
     parser: MessageParser
     last_update_id: int | None
+    patterns: list[CompiledPattern] = field(default_factory=list)
+    export_columns: list[dict] = field(default_factory=list)
+    fallback_to_default: bool = True
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
     last_transient_log: float = 0.0
@@ -123,6 +133,14 @@ class PollerManager:
                 channel_input = listener.channel_input
                 last_update_id = listener.last_update_id
                 parser_state = listener.parser_state or {}
+                profile = await session.scalar(
+                    select(ParserProfile).where(ParserProfile.listener_id == listener_id)
+                )
+                profile_patterns = list(profile.patterns or []) if profile else []
+                export_columns = list(profile.export_columns or []) if profile else []
+                fallback_to_default = (
+                    profile.fallback_to_default if profile else True
+                )
 
             client = TelegramClient(token, poll_timeout=self._settings.telegram_poll_timeout)
             try:
@@ -200,6 +218,14 @@ class PollerManager:
 
             parser = MessageParser()
             parser.restore(parser_state)
+            try:
+                compiled_patterns = compile_patterns(profile_patterns)
+            except PatternError as error:
+                logger.error(
+                    "Invalid parser profile for listener %s: %s", listener_id, error
+                )
+                compiled_patterns = []
+                fallback_to_default = True
             runtime = Runtime(
                 listener_id=listener_id,
                 token=token,
@@ -207,10 +233,33 @@ class PollerManager:
                 client=client,
                 parser=parser,
                 last_update_id=skipped_to,
+                patterns=compiled_patterns,
+                export_columns=export_columns,
+                fallback_to_default=fallback_to_default,
             )
             runtime.task = asyncio.create_task(self._poll_loop(runtime))
             self._runtimes[listener_id] = runtime
             await self._log_event(listener_id, LogLevel.INFO, "Listener started")
+
+    async def reload_parser_profile(self, listener_id: uuid.UUID) -> None:
+        async with self._session_factory() as session:
+            profile = await session.scalar(
+                select(ParserProfile).where(ParserProfile.listener_id == listener_id)
+            )
+            raw_patterns = list(profile.patterns or []) if profile else []
+            export_columns = list(profile.export_columns or []) if profile else []
+            fallback_to_default = profile.fallback_to_default if profile else True
+        try:
+            compiled_patterns = compile_patterns(raw_patterns)
+        except PatternError as error:
+            logger.error("Invalid parser profile for listener %s: %s", listener_id, error)
+            compiled_patterns = []
+            fallback_to_default = True
+        runtime = self._runtimes.get(listener_id)
+        if runtime is not None:
+            runtime.patterns = compiled_patterns
+            runtime.export_columns = export_columns
+            runtime.fallback_to_default = fallback_to_default
 
     async def stop_listener(self, listener_id: uuid.UUID) -> None:
         async with self._lock:
@@ -324,30 +373,48 @@ class PollerManager:
 
         message_id = message.get("message_id")
         base_state = runtime.parser.snapshot()
-        if is_edit and message_id is not None:
-            async with self._session_factory() as session:
-                stored_state = await session.scalar(
-                    select(ListenerLog.parser_state).where(
-                        ListenerLog.listener_id == runtime.listener_id,
-                        ListenerLog.kind == LogKind.MESSAGE,
-                        ListenerLog.message_id == message_id,
-                    )
-                )
-            if stored_state:
-                runtime.parser.restore(stored_state)
-
-        state_before = runtime.parser.snapshot()
         parse_error: Exception | None = None
+        pattern_errors: list[str] = []
         payments = []
-        try:
-            payments = runtime.parser.parse(text)
-        except Exception as error:
-            parse_error = error
-            logger.exception("Parser error for listener %s", runtime.listener_id)
+        used_custom = False
 
-        snapshot = runtime.parser.snapshot()
-        if is_edit:
-            runtime.parser.restore(base_state)
+        if runtime.patterns:
+            pattern_result = parse_compiled_lines(
+                text,
+                runtime.patterns,
+                export_columns=runtime.export_columns,
+            )
+            payments = list(pattern_result.payments)
+            pattern_errors = list(pattern_result.errors)
+            used_custom = bool(payments)
+
+        use_builtin = not used_custom and (
+            runtime.fallback_to_default or not runtime.patterns
+        )
+        if use_builtin:
+            if is_edit and message_id is not None:
+                async with self._session_factory() as session:
+                    stored_state = await session.scalar(
+                        select(ListenerLog.parser_state).where(
+                            ListenerLog.listener_id == runtime.listener_id,
+                            ListenerLog.kind == LogKind.MESSAGE,
+                            ListenerLog.message_id == message_id,
+                        )
+                    )
+                if stored_state:
+                    runtime.parser.restore(stored_state)
+            state_before = runtime.parser.snapshot()
+            try:
+                payments = runtime.parser.parse(text)
+            except Exception as error:
+                parse_error = error
+                logger.exception("Parser error for listener %s", runtime.listener_id)
+            snapshot = runtime.parser.snapshot()
+            if is_edit:
+                runtime.parser.restore(base_state)
+                snapshot = base_state
+        else:
+            state_before = base_state
             snapshot = base_state
 
         valid = []
@@ -482,6 +549,7 @@ class PollerManager:
                         source=payment.source or "\u0643\u0627\u0634",
                         currency=payment.currency,
                         kind=payment.kind,
+                        extra=payment.extra or None,
                     )
                 )
 
@@ -511,6 +579,15 @@ class PollerManager:
                         text=(
                             f"Failed to parse {'edited ' if is_edit else ''}message: {parse_error}"
                         ),
+                    )
+                )
+            if pattern_errors:
+                session.add(
+                    ListenerLog(
+                        listener_id=runtime.listener_id,
+                        kind=LogKind.EVENT,
+                        level=LogLevel.WARNING,
+                        text="Pattern warning: " + "; ".join(pattern_errors)[:2000],
                     )
                 )
 

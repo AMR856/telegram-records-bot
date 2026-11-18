@@ -1,12 +1,5 @@
-"use client";
-
-import { AppShell } from "@/components/AppShell";
-import { PackagesPage } from "@/components/packages/PackagesPage";
+import { redirect } from "next/navigation";
 
 export default function PackagesRoute() {
-  return (
-    <AppShell>
-      <PackagesPage />
-    </AppShell>
-  );
+  redirect("/whatsapp");
 }

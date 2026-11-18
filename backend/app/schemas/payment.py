@@ -13,6 +13,7 @@ class PaymentOut(BaseModel):
     description: str | None
     month: int
     source: str
+    extra: dict[str, str] | None = None
     received_at: datetime
     message_date: datetime | None
 

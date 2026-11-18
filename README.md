@@ -1,9 +1,13 @@
-# Payment Ledger
+# Qayd (قيد)
 
-A multi-user web app for tracking Arabic Telegram payment messages. Accounts are created
+Qayd is a multi-user web app for tracking Arabic Telegram payment messages. Accounts are created
 from a secret admin page, then users connect a Telegram bot to a channel, start a
 listener, watch live logs, browse the parsed payments, and export the matching rows to
 Excel on demand. Public sign-ups are disabled.
+
+Each listener can have its own parsing patterns with custom Excel columns. A separate
+WhatsApp page parses exported `.txt` chats entirely in memory, previews the payments, and
+exports them to Excel without storing the imported rows.
 
 The Telegram traffic is very light: one long-polling loop per listener, no webhooks, and
 no background workers beyond the FastAPI process.
@@ -45,8 +49,8 @@ Requirements: Docker Desktop (or Docker Engine + Compose v2).
    docker compose up --build -d
    ```
 
-3. Open <http://localhost:3000/admin>, enter `ADMIN_SECRET`, and create the first
-   account. Then sign in at <http://localhost:3000/login>.
+3. Open [http://localhost:3000/admin](http://localhost:3000/admin), enter `ADMIN_SECRET`, and create the first
+   account. Then sign in at [http://localhost:3000/login](http://localhost:3000/login).
 
    The admin page is not linked anywhere in the app; keep its URL and secret private.
    From there you can also reset passwords, edit emails, deactivate/reactivate accounts, or
@@ -74,7 +78,8 @@ docker compose down -v       # stop and delete the database volume
 ```
 
 If it is the very first deploy, the backend runs `alembic upgrade head` automatically
-before starting.
+before starting. The parser-profile migration only creates a new table and adds a nullable
+`payments.extra` column; back up the database before upgrading an existing deployment.
 
 ## How it works
 
@@ -94,29 +99,50 @@ before starting.
 - Every received relevant message and every lifecycle event is written to
   `listener_logs`. Logs older than `LOG_RETENTION_DAYS` (default 7) are pruned.
 - Parsed payments are stored in `payments` and kept indefinitely.
+- Each listener can have a parser profile: ordered message templates, placeholders mapped
+  to payment fields or custom keys, default values, and a configurable Excel column list.
+  Profiles apply to new messages; changing a profile does not rewrite stored payments.
+  A profile can be copied to another listener in the same account; profiles and their
+  patterns use sequential default names such as `Profile 1` and `Pattern 1`.
+- The built-in Arabic parser remains the fallback unless it is disabled on a profile.
+  Number fields accept Arabic digits, thousands separators, and words such as `الف`;
+  custom captured values are kept in `payments.extra` and exported with the payment.
 - Excel export is generated on request from the current filters; nothing is written to
   Excel during listening.
+- The WhatsApp page accepts iOS or Android chat exports, detects the date order (or uses
+  an explicit day/month or month/day setting), applies the selected WhatsApp profile, and
+  can copy patterns from any Telegram listener profile. Uploaded files and parsed rows are
+  never stored in the database.
 
 ### API
 
 All routes are under `/api`:
 
-| Route | Purpose |
-| --- | --- |
-| `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` | Account session |
-| `GET/POST /admin/users` | Secret admin API; requires the `X-Admin-Secret` header |
-| `PATCH/DELETE /admin/users/{id}` | Update email/status or delete an account |
-| `POST /admin/users/{id}/password` | Reset an account password and revoke its sessions |
-| `GET/POST /listeners` | List or create listeners |
-| `GET/PATCH/DELETE /listeners/{id}` | Listener details |
-| `POST /listeners/{id}/start`, `POST /listeners/{id}/stop` | Control polling |
-| `GET /listeners/{id}/logs` | Cursor-paginated logs |
-| `DELETE /listeners/{id}/logs/{log_id}` | Remove a stored message and its payments |
-| `GET /listeners/{id}/payments` | Filtered, paginated payments |
-| `GET /listeners/{id}/payments/export.xlsx` | Excel export |
-| `GET /health` | Backend + database health |
+| Route                                                         | Purpose                                                  |
+| ------------------------------------------------------------- | -------------------------------------------------------- |
+| `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` | Account session                                          |
+| `GET/POST /admin/users`                                     | Secret admin API; requires the `X-Admin-Secret` header |
+| `PATCH/DELETE /admin/users/{id}`                            | Update email/status or delete an account                 |
+| `POST /admin/users/{id}/password`                           | Reset an account password and revoke its sessions        |
+| `GET/POST /listeners`                                       | List or create listeners                                 |
+| `GET/PATCH/DELETE /listeners/{id}`                          | Listener details                                         |
+| `POST /listeners/{id}/start`, `POST /listeners/{id}/stop` | Control polling                                          |
+| `GET /listeners/{id}/logs`                                  | Cursor-paginated logs                                    |
+| `DELETE /listeners/{id}/logs/{log_id}`                      | Remove a stored message and its payments                 |
+| `GET /listeners/{id}/payments`                              | Filtered, paginated payments                             |
+| `GET /listeners/{id}/payments/export.xlsx`                  | Excel export using the listener's columns                |
+| `GET/PUT/DELETE /listeners/{id}/parser-profile`             | Listener pattern profile                                 |
+| `POST /listeners/{id}/parser-profile/copy`                  | Copy another listener profile into this listener         |
+| `GET /patterns/profiles`                                    | List pattern profiles owned by the current account       |
+| `POST /patterns/preview`                                    | Preview patterns against sample message text            |
+| `GET/POST /whatsapp/profiles`                               | WhatsApp pattern profiles                                |
+| `GET/PUT/DELETE /whatsapp/profiles/{id}`                    | Edit or delete a WhatsApp profile                        |
+| `POST /whatsapp/profiles/{id}/copy-from-listener/{listener_id}` | Copy patterns from a Telegram listener               |
+| `POST /whatsapp/parse`                                      | Parse an uploaded WhatsApp export (multipart)            |
+| `POST /whatsapp/export.xlsx`                                | Export parsed WhatsApp rows to Excel                     |
+| `GET /health`                                               | Backend + database health                                |
 
-Interactive docs: <http://localhost:8000/docs>.
+Interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ## Local development (without Docker)
 
@@ -150,7 +176,7 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open <http://localhost:3000>. The Next.js server proxies `/api/*` to
+Open [http://localhost:3000](http://localhost:3000). The Next.js server proxies `/api/*` to
 `BACKEND_INTERNAL_URL` (default `http://localhost:8000`), so session cookies stay
 same-origin.
 
@@ -176,19 +202,20 @@ npm run build
 Docker Compose reads the root `.env`; the backend reads the same variable names when run
 directly.
 
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `bot` / required / `management_bot` | Compose database |
-| `DATABASE_URL` | built from the values above | Use `postgresql+asyncpg://...` |
-| `JWT_SECRET` | required | Random string |
-| `ENCRYPTION_KEY` | required | URL-safe base64 32-byte Fernet key |
-| `ACCESS_TOKEN_EXPIRE_DAYS` | `7` | Login cookie lifetime |
-| `COOKIE_SECURE` | `false` | Set `true` behind HTTPS |
-| `ADMIN_SECRET` | required | Secret for the admin page and user creation API |
-| `LOG_RETENTION_DAYS` | `7` | `0` keeps logs forever |
-| `CORS_ORIGINS` | `http://localhost:3000` | Only needed for direct API calls |
-| `TELEGRAM_POLL_TIMEOUT` | `30` | Long-poll timeout, seconds |
-| `BACKEND_PORT` / `FRONTEND_PORT` | `8000` / `3000` | Published Docker ports |
+| Variable                                                    | Default                                 | Notes                                           |
+| ----------------------------------------------------------- | --------------------------------------- | ----------------------------------------------- |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `bot` / required / `management_bot` | Compose database                                |
+| `DATABASE_URL`                                            | built from the values above             | Use `postgresql+asyncpg://...`                |
+| `JWT_SECRET`                                              | required                                | Random string                                   |
+| `ENCRYPTION_KEY`                                          | required                                | URL-safe base64 32-byte Fernet key              |
+| `ACCESS_TOKEN_EXPIRE_DAYS`                                | `7`                                   | Login cookie lifetime                           |
+| `COOKIE_SECURE`                                           | `false`                               | Set `true` behind HTTPS                       |
+| `ADMIN_SECRET`                                            | required                                | Secret for the admin page and user creation API |
+| `LOG_RETENTION_DAYS`                                      | `7`                                   | `0` keeps logs forever                        |
+| `CORS_ORIGINS`                                            | `http://localhost:3000`               | Only needed for direct API calls                |
+| `TELEGRAM_POLL_TIMEOUT`                                   | `30`                                  | Long-poll timeout, seconds                      |
+| `WHATSAPP_MAX_UPLOAD_MB`                                  | `40`                                  | Maximum WhatsApp export size                    |
+| `BACKEND_PORT` / `FRONTEND_PORT`                        | `8000` / `3000`                     | Published Docker ports                          |
 
 ## Security and operations
 
@@ -218,15 +245,15 @@ backend/
     api/          FastAPI routers and dependencies
     core/         settings and security helpers
     db/           SQLAlchemy base/session
-    models/       users, listeners, payments, logs
+    models/       users, listeners, payments, logs, parser profiles
     schemas/      request/response models
-    services/     Telegram client, poller manager, parser, exporter
+    services/     Telegram client, poller manager, parsers, pattern engine, exporter
   alembic/        migration environment and schema revisions
-  tests/          auth, listener, logs/payments/export, poller tests
+  tests/          auth, listener, logs/payments/export, patterns, WhatsApp tests
 frontend/
-  app/            login, dashboard, listener detail, secret admin page
-  components/     UI, forms, logs, payments
-  lib/            API client, hooks, i18n, formatting
+  app/            login, dashboard, listener detail, WhatsApp, secret admin page
+  components/     UI, forms, logs, payments, pattern editor, WhatsApp import
+  lib/            API client, hooks, i18n, formatting, pattern helpers
 legacy/           original script, logs, and payments.xlsx (reference only)
 ```
 

@@ -29,7 +29,7 @@ function detailFromBody(body: unknown): string | null {
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -57,6 +57,40 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     );
   }
   return body as T;
+}
+
+export async function apiFetchBlob(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const headers = new Headers(init.headers);
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  } catch {
+    throw new ApiError("Network request failed", 0);
+  }
+
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    throw new ApiError(
+      detailFromBody(body) ?? response.statusText ?? `Request failed (${response.status})`,
+      response.status,
+    );
+  }
+
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return { blob: await response.blob(), filename: match?.[1] ?? null };
 }
 
 export function errorMessage(error: unknown, fallback: string): string {

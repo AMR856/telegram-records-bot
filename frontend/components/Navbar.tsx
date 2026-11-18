@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
+  ChatIcon,
   GlobeIcon,
   LogoutIcon,
   WalletIcon,
@@ -19,7 +20,7 @@ export function Navbar() {
   const logout = useLogout();
   const router = useRouter();
   const pathname = usePathname();
-  const onPackages = pathname.startsWith("/packages");
+  const onWhatsapp = pathname.startsWith("/whatsapp");
 
   const handleLogout = async () => {
     try {
@@ -50,8 +51,8 @@ export function Navbar() {
           <Link
             href="/"
             className={cn(
-              "whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
-              onPackages
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
+              onWhatsapp
                 ? "text-stone-500 hover:bg-white/70 hover:text-stone-800"
                 : "bg-white text-stone-900 shadow-sm",
             )}
@@ -59,15 +60,16 @@ export function Navbar() {
             {dict.navDashboard}
           </Link>
           <Link
-            href="/packages"
+            href="/whatsapp"
             className={cn(
-              "whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
-              onPackages
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
+              onWhatsapp
                 ? "bg-white text-stone-900 shadow-sm"
                 : "text-stone-500 hover:bg-white/70 hover:text-stone-800",
             )}
           >
-            {dict.navPackages}
+            <ChatIcon className="h-3.5 w-3.5" />
+            {dict.navWhatsapp}
           </Link>
         </nav>
 

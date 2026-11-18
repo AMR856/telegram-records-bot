@@ -1,6 +1,6 @@
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 CONTEXT_TTL_SECONDS = 10 * 60
@@ -114,6 +114,7 @@ class PaymentData:
     source: str = ""
     currency: str = "SYP"
     kind: str = "payment"
+    extra: dict[str, str] = field(default_factory=dict)
 
 
 class MessageParser:
@@ -133,6 +134,7 @@ class MessageParser:
                 "source": self._pending.source,
                 "currency": self._pending.currency,
                 "kind": self._pending.kind,
+                "extra": self._pending.extra,
             }
         return {
             "pending": pending,
@@ -147,6 +149,7 @@ class MessageParser:
         self._pending = None
         if isinstance(pending, dict):
             try:
+                extra = pending.get("extra")
                 self._pending = PaymentData(
                     value=float(pending["value"]),
                     name=str(pending["name"]),
@@ -155,6 +158,7 @@ class MessageParser:
                     source=str(pending.get("source") or ""),
                     currency=str(pending.get("currency") or "SYP"),
                     kind=str(pending.get("kind") or "payment"),
+                    extra=dict(extra) if isinstance(extra, dict) else {},
                 )
             except (KeyError, TypeError, ValueError):
                 self._pending = None
@@ -164,7 +168,7 @@ class MessageParser:
         except (TypeError, ValueError):
             self._context_time = 0.0
 
-    def parse(self, message: str) -> list[PaymentData]:
+    def parse(self, message: str, default_month: int | None = None) -> list[PaymentData]:
         text = self._normalize(message)
         payments = []
         context_source = self._current_context_source()
@@ -187,7 +191,7 @@ class MessageParser:
             if self._skip(cleaned):
                 continue
             payments.extend(self._parse_line(cleaned, line_source or context_source))
-        current_month = datetime.now().month
+        current_month = default_month or datetime.now().month
         for payment in payments:
             self._move_person_to_description(payment)
             if not payment.source:
