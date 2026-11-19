@@ -23,6 +23,7 @@ class WhatsAppRow(BaseModel):
     date: datetime | None = None
     sender: str = Field(default="", max_length=255)
     raw: str = Field(default="", max_length=20000)
+    pattern: str | None = Field(default=None, max_length=100)
     value: float | None = None
     name: str = Field(default="", max_length=255)
     description: str = Field(default="", max_length=20000)

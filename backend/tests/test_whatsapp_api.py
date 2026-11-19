@@ -1,4 +1,7 @@
+from io import BytesIO
+
 from httpx import AsyncClient
+from openpyxl import load_workbook
 
 from tests.conftest import bot_token, create_user
 from tests.test_listeners import create_listener
@@ -142,6 +145,7 @@ async def test_whatsapp_profile_copy_parse_and_export(client: AsyncClient):
     body = parsed.json()
     assert body["row_count"] == 1
     assert body["rows"][0]["value"] == 550
+    assert body["rows"][0]["pattern"] == "invoice"
     assert body["rows"][0]["sender"] == "Ahmed"
     assert body["columns"][0]["key"] == "date"
 
@@ -154,3 +158,108 @@ async def test_whatsapp_profile_copy_parse_and_export(client: AsyncClient):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     assert len(exported.content) > 1000
+    workbook = load_workbook(BytesIO(exported.content))
+    assert workbook.sheetnames == ["invoice"]
+
+
+async def test_whatsapp_export_uses_pattern_columns(client: AsyncClient):
+    await create_user(client)
+    created = await client.post(
+        "/api/whatsapp/profiles",
+        json={
+            "name": "Own columns",
+            "patterns": [
+                {
+                    "name": "wood",
+                    "template": "{amount} {wood}",
+                    "fields": [
+                        {
+                            "placeholder": "amount",
+                            "target": "value",
+                            "type": "number",
+                        },
+                        {"placeholder": "wood", "target": "wood", "type": "text"},
+                    ],
+                    "export_columns": [
+                        {
+                            "key": "value",
+                            "header": "Amount",
+                            "source": "field",
+                            "field": "value",
+                            "default": None,
+                        },
+                        {
+                            "key": "wood",
+                            "header": "Wood",
+                            "source": "custom",
+                            "field": None,
+                            "default": None,
+                        },
+                    ],
+                }
+            ],
+            "export_columns": [],
+            "fallback_to_default": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    profile = created.json()
+
+    text = "17/11/2026, 9:05 PM - Ahmed: 550 oak\n"
+    parsed = await client.post(
+        "/api/whatsapp/parse",
+        data={"profile_id": profile["id"], "date_order": "dmy"},
+        files={"file": ("chat.txt", text.encode("utf-8"), "text/plain")},
+    )
+    assert parsed.status_code == 200, parsed.text
+    body = parsed.json()
+    assert body["row_count"] == 1
+    assert body["rows"][0]["pattern"] == "wood"
+    keys = [column["key"] for column in body["columns"]]
+    assert body["rows"][0]["cells"][keys.index("wood")] == "oak"
+
+    exported = await client.post(
+        "/api/whatsapp/export.xlsx",
+        json={"profile_id": profile["id"], "rows": body["rows"]},
+    )
+    assert exported.status_code == 200, exported.text
+    workbook = load_workbook(BytesIO(exported.content))
+    assert workbook.sheetnames == ["wood"]
+    assert [cell.value for cell in workbook["wood"][1]] == ["Amount", "Wood"]
+    assert workbook["wood"].cell(row=2, column=2).value == "oak"
+
+
+async def test_pattern_targets_validate_against_own_columns(client: AsyncClient):
+    await create_user(client)
+    created = await client.post(
+        "/api/whatsapp/profiles",
+        json={
+            "name": "Pattern columns",
+            "patterns": [
+                {
+                    "name": "custom",
+                    "template": "{amount} {wood}",
+                    "fields": [
+                        {
+                            "placeholder": "amount",
+                            "target": "value",
+                            "type": "number",
+                        },
+                        {"placeholder": "wood", "target": "wood", "type": "text"},
+                    ],
+                    "export_columns": [
+                        {
+                            "key": "wood",
+                            "header": "Wood",
+                            "source": "custom",
+                            "field": None,
+                            "default": None,
+                        },
+                    ],
+                }
+            ],
+            "export_columns": [],
+            "fallback_to_default": False,
+        },
+    )
+    assert created.status_code == 201, created.text

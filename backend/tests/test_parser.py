@@ -35,9 +35,18 @@ class BasicParsingTests(ParserTestCase):
     def test_value_first_without_description(self):
         self.assert_single("1000 علي محمد شهر 10", 1000, "علي محمد", "", 10)
 
-    def test_tasdeed_description_dropped(self):
+    def test_tasdeed_description_kept(self):
         self.assert_single(
-            "1850 عمرو محمد مهدي النص تسديد شهر 11", 1850, "عمرو محمد مهدي النص", "", 11
+            "1850 عمرو محمد مهدي النص تسديد شهر 11",
+            1850,
+            "عمرو محمد مهدي النص",
+            "تسديد",
+            11,
+        )
+
+    def test_tasdeed_description_kept_with_value_first(self):
+        self.assert_single(
+            "1350 محمد عصام تسديد شهر 11", 1350, "محمد عصام", "تسديد", 11
         )
 
     def test_attached_digit_in_name_is_kept(self):
@@ -172,7 +181,7 @@ class BasicParsingTests(ParserTestCase):
             "1850 عمرو محمد مهدي النص تسديد",
             1850,
             "عمرو محمد مهدي النص",
-            "",
+            "تسديد",
             datetime.now().month,
         )
 

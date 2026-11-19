@@ -58,6 +58,7 @@ export type Payment = {
   description: string | null;
   month: number;
   source: string;
+  pattern: string | null;
   extra: Record<string, string> | null;
   received_at: string;
   message_date: string | null;
@@ -105,6 +106,7 @@ export type PatternDefinition = {
   fields: PatternField[];
   defaults: Record<string, string>;
   enabled: boolean;
+  export_columns: ExportColumn[];
 };
 
 export type ExportColumnSource = "field" | "custom" | "constant";
@@ -145,11 +147,19 @@ export type PatternPreviewRow = {
   currency: PaymentCurrency;
   kind: PaymentKind;
   extra: Record<string, string>;
+  pattern: string | null;
   cells: string[];
+};
+
+export type PatternPreviewGroup = {
+  pattern: string | null;
+  columns: ExportColumn[];
+  rows: PatternPreviewRow[];
 };
 
 export type PatternPreviewResponse = {
   rows: PatternPreviewRow[];
+  groups: PatternPreviewGroup[];
   unmatched_lines: string[];
   errors: string[];
   columns: ExportColumn[];
@@ -161,6 +171,7 @@ export type WhatsAppRow = {
   date: string | null;
   sender: string;
   raw: string;
+  pattern: string | null;
   value: number | null;
   name: string;
   description: string;

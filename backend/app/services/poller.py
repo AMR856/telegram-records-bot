@@ -542,6 +542,7 @@ class PollerManager:
                         message_id=message_id,
                         item_index=index,
                         message_date=message_date,
+                        pattern_name=payment.pattern_name or None,
                         value=value,
                         name=payment.name[:255],
                         description=payment.description or None,

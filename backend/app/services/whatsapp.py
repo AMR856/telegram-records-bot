@@ -6,8 +6,10 @@ from typing import Any, Literal
 from app.services.parser import ARABIC_DIGITS, MessageParser, PaymentData
 from app.services.pattern_engine import (
     compile_patterns,
+    merge_export_columns,
     normalize_text,
     parse_compiled_lines,
+    pattern_export_columns,
     resolve_row_cells,
 )
 
@@ -313,6 +315,8 @@ def process_whatsapp_export(
 ) -> WhatsAppProcessingResult:
     exported = parse_whatsapp_export(text, date_order=date_order)
     columns = export_columns or whatsapp_default_columns()
+    pattern_columns = pattern_export_columns(patterns)
+    display_columns = merge_export_columns(columns, list(pattern_columns.values()))
     errors = list(exported.errors)
 
     try:
@@ -358,6 +362,7 @@ def process_whatsapp_export(
                 "date": message.date,
                 "sender": message.sender,
                 "raw": message.body,
+                "pattern": payment.pattern_name,
                 "value": payment.value,
                 "name": payment.name,
                 "description": payment.description,
@@ -367,7 +372,7 @@ def process_whatsapp_export(
                 "kind": payment.kind,
                 "extra": payment.extra,
             }
-            row["cells"] = resolve_row_cells(row, columns)
+            row["cells"] = resolve_row_cells(row, display_columns)
             rows.append(row)
 
     total_syp = sum(float(row["value"]) for row in rows if row["currency"] == "SYP")
@@ -375,7 +380,7 @@ def process_whatsapp_export(
 
     return WhatsAppProcessingResult(
         rows=rows,
-        columns=columns,
+        columns=display_columns,
         message_count=len(exported.messages),
         row_count=len(rows),
         unmatched_messages=unmatched_messages,

@@ -58,12 +58,53 @@ def test_process_with_custom_pattern():
     assert result.row_count == 1
     row = result.rows[0]
     assert row["value"] == 550
+    assert row["pattern"] == "invoice"
     assert row["date"] == datetime(2026, 11, 17, 21, 5)
     assert row["sender"] == "Ahmed"
     assert row["month"] == 11
     assert row["cells"][0] == "2026-11-17 21:05:00"
     assert row["cells"][1] == "Ahmed"
     assert row["cells"][2] == "550.0"
+
+
+def test_process_uses_pattern_columns_for_display_and_cells():
+    text = "[17/11/2026, 9:05:00 PM] Ahmed: 550 oak\n"
+    patterns = [
+        {
+            "name": "wood",
+            "template": "{amount} {wood}",
+            "fields": [
+                {"placeholder": "amount", "target": "value", "type": "number"},
+                {"placeholder": "wood", "target": "wood", "type": "text"},
+            ],
+            "export_columns": [
+                {
+                    "key": "value",
+                    "header": "Amount",
+                    "source": "field",
+                    "field": "value",
+                },
+                {
+                    "key": "wood",
+                    "header": "Wood",
+                    "source": "custom",
+                    "field": None,
+                },
+            ],
+        }
+    ]
+
+    result = process_whatsapp_export(
+        text,
+        patterns=patterns,
+        fallback_to_default=False,
+        date_order="dmy",
+    )
+
+    keys = [column["key"] for column in result.columns]
+    assert keys[:3] == ["date", "sender", "value"]
+    assert "wood" in keys
+    assert result.rows[0]["cells"][keys.index("wood")] == "oak"
 
 
 def test_process_falls_back_to_builtin_parser():
@@ -75,6 +116,7 @@ def test_process_falls_back_to_builtin_parser():
     assert result.row_count == 1
     assert result.rows[0]["name"] == "علي"
     assert result.rows[0]["description"] == "فاتورة نجارة"
+    assert result.rows[0]["pattern"] is None
 
 
 def test_unmatched_message_is_counted():

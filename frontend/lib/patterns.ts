@@ -83,18 +83,24 @@ export function fieldKeysFor(kind: "telegram" | "whatsapp"): readonly string[] {
   return kind === "whatsapp" ? WHATSAPP_FIELDS : TELEGRAM_FIELDS;
 }
 
-export function defaultColumns(
-  kind: "telegram" | "whatsapp",
+export function defaultExportColumn(
+  field: string,
   dict: Dictionary,
-): ExportColumn[] {
-  return fieldKeysFor(kind).map((field) => ({
+): ExportColumn {
+  return {
     key: field,
     header: fieldLabel(field, dict),
     source: "field",
     field,
-    default:
-      field === "currency" ? "SYP" : field === "kind" ? "payment" : null,
-  }));
+    default: field === "currency" ? "SYP" : field === "kind" ? "payment" : null,
+  };
+}
+
+export function defaultColumns(
+  kind: "telegram" | "whatsapp",
+  dict: Dictionary,
+): ExportColumn[] {
+  return fieldKeysFor(kind).map((field) => defaultExportColumn(field, dict));
 }
 
 export function extractPlaceholders(template: string): string[] {
@@ -129,6 +135,27 @@ export function guessField(
   const hasTarget = (key: string) =>
     (CANONICAL_TARGETS as readonly string[]).includes(key) || customKeys.includes(key);
 
+  const exactTarget =
+    (CANONICAL_TARGETS as readonly string[]).find(
+      (key) => key.toLowerCase() === lower,
+    ) ?? customKeys.find((key) => key.toLowerCase() === lower);
+  if (exactTarget) {
+    return {
+      placeholder,
+      target: exactTarget,
+      type:
+        exactTarget === "value"
+          ? "number"
+          : exactTarget === "month"
+            ? "month"
+            : "text",
+      required:
+        exactTarget === "value" ||
+        exactTarget === "month" ||
+        exactTarget === "name",
+    };
+  }
+
   if (includesAny(lower, ["amount", "value", "price", "total", "مبلغ", "قيمة", "سعر"])) {
     return { placeholder, target: "value", type: "number", required: true };
   }
@@ -158,12 +185,16 @@ export function nextNumberedName(base: string, names: string[]): string {
   return `${base} ${index}`;
 }
 
-export function starterPattern(dict: Dictionary, index = 1): PatternDefinition {
+export function starterPattern(
+  dict: Dictionary,
+  columns: ExportColumn[] = [],
+  index = 1,
+): PatternDefinition {
   return {
     name: `${dict.patternsDefaultName} ${index}`,
-    template: "{amount} {description}",
+    template: "{value} {description}",
     fields: [
-      { placeholder: "amount", target: "value", type: "number", required: true },
+      { placeholder: "value", target: "value", type: "number", required: true },
       {
         placeholder: "description",
         target: "description",
@@ -173,6 +204,7 @@ export function starterPattern(dict: Dictionary, index = 1): PatternDefinition {
     ],
     defaults: {},
     enabled: true,
+    export_columns: columns.map((column) => ({ ...column })),
   };
 }
 
@@ -199,15 +231,4 @@ export function nextCustomKey(columns: ExportColumn[], base = "custom"): string 
   let index = 1;
   while (used.has(`${base}_${index}`)) index += 1;
   return `${base}_${index}`;
-}
-
-export function starterColumn(columns: ExportColumn[], dict: Dictionary): ExportColumn {
-  const index = columns.filter((column) => column.source === "custom").length + 1;
-  return {
-    key: nextCustomKey(columns),
-    header: `${dict.patternsCustomKey} ${index}`,
-    source: "custom",
-    field: null,
-    default: null,
-  };
 }

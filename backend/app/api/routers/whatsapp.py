@@ -17,6 +17,7 @@ from app.schemas.whatsapp import (
     WhatsAppProfileUpdate,
 )
 from app.services.exporter import build_rows_workbook
+from app.services.pattern_engine import pattern_export_columns
 from app.services.whatsapp import (
     process_whatsapp_export,
     whatsapp_default_columns,
@@ -204,8 +205,11 @@ async def export_whatsapp(
 ):
     profile = await _get_profile(session, payload.profile_id, user.id)
     columns = list(profile.export_columns or []) or whatsapp_default_columns()
+    pattern_columns = pattern_export_columns(profile.patterns)
     rows = [row.model_dump() for row in payload.rows]
-    content = await run_in_threadpool(build_rows_workbook, rows, columns)
+    content = await run_in_threadpool(
+        build_rows_workbook, rows, columns, pattern_columns
+    )
     filename = f"whatsapp-payments-{date.today():%Y%m%d}.xlsx"
     return Response(
         content=content,

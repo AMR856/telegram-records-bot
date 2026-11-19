@@ -10,6 +10,7 @@ from app.models.log import ListenerLog
 from app.models.payment import Payment
 from app.models.user import User
 from app.services.parser import MessageParser
+from app.services.pattern_engine import compile_patterns, default_export_columns
 from app.services.poller import PollerManager, Runtime
 from tests.conftest import bot_token
 
@@ -112,9 +113,50 @@ async def test_process_update_creates_log_and_payments():
         listener = await session.get(BotListener, listener_id)
     assert len(payments) == 2
     assert {payment.name for payment in payments} == {"علي", "محمد"}
+    assert {payment.pattern_name for payment in payments} == {None}
     assert sum(float(payment.value) for payment in payments) == 3000.0
     assert len(logs) == 2
     assert listener.last_update_id == 2
+
+
+async def test_custom_pattern_name_is_stored_with_payment():
+    listener_id = await make_listener()
+    manager = PollerManager(SessionLocal, get_settings())
+    runtime = Runtime(
+        listener_id=listener_id,
+        token="token",
+        resolved_chat_id=-1001234567890,
+        client=DummyClient(),
+        parser=MessageParser(),
+        last_update_id=None,
+        patterns=compile_patterns(
+            [
+                {
+                    "name": "invoice",
+                    "template": "{amount} {description}",
+                    "fields": [
+                        {"placeholder": "amount", "target": "value", "type": "number"},
+                        {
+                            "placeholder": "description",
+                            "target": "description",
+                            "type": "text",
+                        },
+                    ],
+                }
+            ]
+        ),
+        export_columns=default_export_columns(),
+        fallback_to_default=False,
+    )
+
+    await manager._process_update(runtime, update(1, "550 فاتورة نجارة"))
+
+    async with SessionLocal() as session:
+        payments = list(
+            (await session.scalars(select(Payment).where(Payment.listener_id == listener_id))).all()
+        )
+    assert len(payments) == 1
+    assert payments[0].pattern_name == "invoice"
 
 
 async def test_other_chat_is_ignored_but_offset_advances():

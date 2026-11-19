@@ -31,30 +31,6 @@ class PatternField(BaseModel):
         return value
 
 
-class PatternDefinition(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    template: str = Field(min_length=1, max_length=1000)
-    fields: list[PatternField] = Field(min_length=1)
-    defaults: dict[str, str] = Field(default_factory=dict)
-    enabled: bool = True
-
-    @field_validator("name", "template")
-    @classmethod
-    def clean_text(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("value cannot be empty")
-        return value
-
-    @model_validator(mode="after")
-    def validate_pattern(self) -> "PatternDefinition":
-        try:
-            compile_patterns([self.model_dump()])
-        except PatternError as error:
-            raise ValueError(str(error)) from error
-        return self
-
-
 class ExportColumn(BaseModel):
     key: str = Field(min_length=1, max_length=100)
     header: str = Field(min_length=1, max_length=100)
@@ -88,6 +64,68 @@ class ExportColumn(BaseModel):
         return self
 
 
+class PatternDefinition(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    template: str = Field(min_length=1, max_length=1000)
+    fields: list[PatternField] = Field(min_length=1)
+    defaults: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+    export_columns: list[ExportColumn] = Field(default_factory=list)
+
+    @field_validator("name", "template")
+    @classmethod
+    def clean_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value cannot be empty")
+        return value
+
+    @model_validator(mode="after")
+    def validate_pattern(self) -> "PatternDefinition":
+        try:
+            compile_patterns([self.model_dump()])
+        except PatternError as error:
+            raise ValueError(str(error)) from error
+        return self
+
+
+def validate_pattern_columns(
+    patterns: list[PatternDefinition],
+    export_columns: list[ExportColumn],
+) -> None:
+    keys = [column.key for column in export_columns]
+    if len(set(keys)) != len(keys):
+        raise ValueError("export column keys must be unique")
+
+    names = [pattern.name.strip().casefold() for pattern in patterns]
+    if len(set(names)) != len(names):
+        raise ValueError("pattern names must be unique")
+
+    profile_targets = build_target_map(
+        [column.model_dump() for column in export_columns]
+    )
+    for pattern in patterns:
+        pattern_keys = [column.key for column in pattern.export_columns]
+        if len(set(pattern_keys)) != len(pattern_keys):
+            raise ValueError(f"{pattern.name}: column keys must be unique")
+
+        if pattern.export_columns:
+            targets = build_target_map(
+                [column.model_dump() for column in pattern.export_columns]
+            )
+        else:
+            targets = profile_targets
+
+        field_targets = {field.target for field in pattern.fields}
+        default_targets = set(pattern.defaults)
+        unknown = (field_targets | default_targets) - set(targets)
+        if unknown:
+            raise ValueError(
+                f"{pattern.name}: pattern targets are not mapped to columns: "
+                + ", ".join(sorted(unknown))
+            )
+
+
 class PatternProfileUpdate(BaseModel):
     name: str = Field(default="Profile 1", min_length=1, max_length=100)
     patterns: list[PatternDefinition] = Field(default_factory=list)
@@ -104,17 +142,7 @@ class PatternProfileUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_pattern_targets(self) -> "PatternProfileUpdate":
-        keys = [column.key for column in self.export_columns]
-        if len(set(keys)) != len(keys):
-            raise ValueError("export column keys must be unique")
-        targets = build_target_map([column.model_dump() for column in self.export_columns])
-        field_targets = {field.target for pattern in self.patterns for field in pattern.fields}
-        default_targets = {target for pattern in self.patterns for target in pattern.defaults}
-        unknown = (field_targets | default_targets) - set(targets)
-        if unknown:
-            raise ValueError(
-                "pattern targets are not mapped to columns: " + ", ".join(sorted(unknown))
-            )
+        validate_pattern_columns(self.patterns, self.export_columns)
         return self
 
 
@@ -144,17 +172,7 @@ class PatternPreviewRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_targets(self) -> "PatternPreviewRequest":
-        keys = [column.key for column in self.export_columns]
-        if len(set(keys)) != len(keys):
-            raise ValueError("export column keys must be unique")
-        targets = build_target_map([column.model_dump() for column in self.export_columns])
-        field_targets = {field.target for pattern in self.patterns for field in pattern.fields}
-        default_targets = {target for pattern in self.patterns for target in pattern.defaults}
-        unknown = (field_targets | default_targets) - set(targets)
-        if unknown:
-            raise ValueError(
-                "pattern targets are not mapped to columns: " + ", ".join(sorted(unknown))
-            )
+        validate_pattern_columns(self.patterns, self.export_columns)
         return self
 
 
@@ -167,11 +185,19 @@ class PatternPreviewRow(BaseModel):
     currency: str
     kind: str
     extra: dict[str, str]
+    pattern: str | None = None
     cells: list[str]
+
+
+class PatternPreviewGroup(BaseModel):
+    pattern: str | None = None
+    columns: list[ExportColumn]
+    rows: list[PatternPreviewRow]
 
 
 class PatternPreviewResponse(BaseModel):
     rows: list[PatternPreviewRow]
+    groups: list[PatternPreviewGroup] = Field(default_factory=list)
     unmatched_lines: list[str]
     errors: list[str]
     columns: list[ExportColumn]

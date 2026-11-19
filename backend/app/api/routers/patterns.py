@@ -7,6 +7,7 @@ from app.api.deps import CurrentUser, OwnedListener, SessionDep
 from app.models.parser_profile import ParserProfile
 from app.schemas.pattern import (
     CopyProfileRequest,
+    PatternPreviewGroup,
     PatternPreviewRequest,
     PatternPreviewResponse,
     PatternPreviewRow,
@@ -16,6 +17,7 @@ from app.schemas.pattern import (
 from app.services.pattern_engine import (
     default_export_columns,
     parse_pattern_lines,
+    pattern_export_columns,
     resolve_row_cells,
 )
 
@@ -157,15 +159,23 @@ async def preview_patterns(
         if payload.export_columns
         else default_export_columns()
     )
+    patterns = [pattern.model_dump() for pattern in payload.patterns]
+    pattern_columns = pattern_export_columns(patterns)
     result = parse_pattern_lines(
         payload.text,
-        [pattern.model_dump() for pattern in payload.patterns],
+        patterns,
         default_month=payload.default_month,
         export_columns=columns,
     )
     date = datetime.now(UTC)
     rows = []
+    grouped: dict[str | None, list[PatternPreviewRow]] = {}
     for payment in result.payments:
+        row_columns = (
+            pattern_columns.get(payment.pattern_name)
+            if payment.pattern_name
+            else None
+        ) or columns
         row = {
             "date": date,
             "value": payment.value,
@@ -177,21 +187,34 @@ async def preview_patterns(
             "kind": payment.kind,
             "extra": payment.extra,
         }
-        rows.append(
-            PatternPreviewRow(
-                value=payment.value,
-                name=payment.name,
-                description=payment.description,
-                month=payment.month or date.month,
-                source=payment.source,
-                currency=payment.currency,
-                kind=payment.kind,
-                extra=payment.extra,
-                cells=resolve_row_cells(row, columns),
-            )
+        preview_row = PatternPreviewRow(
+            value=payment.value,
+            name=payment.name,
+            description=payment.description,
+            month=payment.month or date.month,
+            source=payment.source,
+            currency=payment.currency,
+            kind=payment.kind,
+            extra=payment.extra,
+            pattern=payment.pattern_name,
+            cells=resolve_row_cells(row, row_columns),
         )
+        rows.append(preview_row)
+        grouped.setdefault(payment.pattern_name, []).append(preview_row)
+
+    groups = [
+        PatternPreviewGroup(
+            pattern=name,
+            columns=(
+                pattern_columns.get(name) if name else None
+            ) or columns,
+            rows=group_rows,
+        )
+        for name, group_rows in grouped.items()
+    ]
     return PatternPreviewResponse(
         rows=rows,
+        groups=groups,
         unmatched_lines=result.unmatched_lines,
         errors=result.errors,
         columns=columns,

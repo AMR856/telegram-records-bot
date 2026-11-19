@@ -9,6 +9,7 @@ from app.models.parser_profile import ParserProfile
 from app.models.payment import Payment
 from app.schemas.payment import PaymentOut, PaymentPage
 from app.services.exporter import build_payments_workbook
+from app.services.pattern_engine import pattern_export_columns
 
 router = APIRouter(prefix="/listeners", tags=["payments"])
 
@@ -46,6 +47,7 @@ def _to_out(payment: Payment) -> PaymentOut:
         description=payment.description,
         month=payment.month,
         source=payment.source,
+        pattern=payment.pattern_name,
         extra=payment.extra,
         received_at=payment.received_at,
         message_date=payment.message_date,
@@ -123,7 +125,10 @@ async def export_payments(
         select(ParserProfile).where(ParserProfile.listener_id == listener.id)
     )
     columns = list(profile.export_columns or []) if profile else None
-    content = await run_in_threadpool(build_payments_workbook, rows, columns)
+    pattern_columns = pattern_export_columns(profile.patterns if profile else None)
+    content = await run_in_threadpool(
+        build_payments_workbook, rows, columns, pattern_columns
+    )
     filename = f"payments-{listener.id.hex[:8]}-{date.today():%Y%m%d}.xlsx"
     return Response(
         content=content,

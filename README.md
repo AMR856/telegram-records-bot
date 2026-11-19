@@ -5,7 +5,7 @@ from a secret admin page, then users connect a Telegram bot to a channel, start 
 listener, watch live logs, browse the parsed payments, and export the matching rows to
 Excel on demand. Public sign-ups are disabled.
 
-Each listener can have its own parsing patterns with custom Excel columns. A separate
+Each listener can have its own parsing patterns, each with its own Excel columns. A separate
 WhatsApp page parses exported `.txt` chats entirely in memory, previews the payments, and
 exports them to Excel without storing the imported rows.
 
@@ -78,8 +78,9 @@ docker compose down -v       # stop and delete the database volume
 ```
 
 If it is the very first deploy, the backend runs `alembic upgrade head` automatically
-before starting. The parser-profile migration only creates a new table and adds a nullable
-`payments.extra` column; back up the database before upgrading an existing deployment.
+before starting. The parser-profile migrations only add tables and nullable columns
+(`payments.extra`, `payments.pattern_name`); back up the database before upgrading an
+existing deployment.
 
 ## How it works
 
@@ -101,14 +102,20 @@ before starting. The parser-profile migration only creates a new table and adds 
 - Parsed payments are stored in `payments` and kept indefinitely.
 - Each listener can have a parser profile: ordered message templates, placeholders mapped
   to payment fields or custom keys, default values, and a configurable Excel column list.
-  Profiles apply to new messages; changing a profile does not rewrite stored payments.
-  A profile can be copied to another listener in the same account; profiles and their
-  patterns use sequential default names such as `Profile 1` and `Pattern 1`.
+  Every pattern can also define its own column list; that list is used for the pattern's
+  worksheet on export, while the profile-level list is used for the built-in parser and
+  for patterns that do not define their own columns. Profiles apply to new messages;
+  changing a profile does not rewrite stored payments. A profile can be copied to another
+  listener in the same account; profiles and their patterns use sequential default names
+  such as `Profile 1` and `Pattern 1`.
 - The built-in Arabic parser remains the fallback unless it is disabled on a profile.
   Number fields accept Arabic digits, thousands separators, and words such as `الف`;
   custom captured values are kept in `payments.extra` and exported with the payment.
 - Excel export is generated on request from the current filters; nothing is written to
-  Excel during listening.
+  Excel during listening. Rows are split into one worksheet per parser pattern (the
+  `Default` sheet holds rows parsed by the built-in parser), so each sheet only contains
+  the payments produced by that pattern. Each worksheet uses that pattern's own Excel
+  columns; patterns without their own columns use the profile-level columns.
 - The WhatsApp page accepts iOS or Android chat exports, detects the date order (or uses
   an explicit day/month or month/day setting), applies the selected WhatsApp profile, and
   can copy patterns from any Telegram listener profile. Uploaded files and parsed rows are

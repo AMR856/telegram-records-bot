@@ -64,6 +64,10 @@ class Payment(Base):
     # the payment was actually sent in the chat.
     message_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Name of the custom pattern that produced this payment. Null means the
+    # built-in/default parser handled the message.
+    pattern_name: Mapped[str | None] = mapped_column(String(100))
+
     # The monetary amount of the payment, stored as a precise decimal
     # with up to 14 total digits and 2 decimal places.
     value: Mapped[Decimal] = mapped_column(Numeric(14, 2))

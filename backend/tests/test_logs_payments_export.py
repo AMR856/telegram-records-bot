@@ -102,6 +102,137 @@ async def test_logs_payments_and_export(client: AsyncClient):
     ]
 
 
+async def test_export_splits_payments_by_pattern(client: AsyncClient):
+    import uuid
+
+    await create_user(client)
+    listener = await create_listener(client, bot_token("S"))
+
+    async with SessionLocal() as session:
+        for index, pattern in enumerate((None, "Pattern 1", "Pattern 2"), start=1):
+            session.add(
+                Payment(
+                    listener_id=uuid.UUID(listener["id"]),
+                    update_id=index,
+                    message_id=index,
+                    item_index=0,
+                    received_at=datetime.now(UTC),
+                    value=Decimal("100"),
+                    currency="SYP",
+                    kind="payment",
+                    name=f"Row {index}",
+                    description="invoice",
+                    month=10,
+                    source="cash",
+                    pattern_name=pattern,
+                )
+            )
+        await session.commit()
+
+    export = await client.get(f"/api/listeners/{listener['id']}/payments/export.xlsx")
+    assert export.status_code == 200
+    workbook = load_workbook(BytesIO(export.content))
+    assert workbook.sheetnames == ["Default", "Pattern 1", "Pattern 2"]
+    assert [workbook[name].max_row for name in workbook.sheetnames] == [2, 2, 2]
+    assert [
+        workbook[name].cell(row=2, column=4).value for name in workbook.sheetnames
+    ] == ["Row 1", "Row 2", "Row 3"]
+
+
+async def test_export_uses_each_patterns_columns(client: AsyncClient):
+    import uuid
+
+    await create_user(client)
+    listener = await create_listener(client, bot_token("T"))
+
+    saved = await client.put(
+        f"/api/listeners/{listener['id']}/parser-profile",
+        json={
+            "name": "Per-pattern exports",
+            "patterns": [
+                {
+                    "name": "invoice",
+                    "template": "{value} {description}",
+                    "fields": [
+                        {
+                            "placeholder": "value",
+                            "target": "value",
+                            "type": "number",
+                        },
+                        {
+                            "placeholder": "description",
+                            "target": "description",
+                            "type": "text",
+                        },
+                    ],
+                    "export_columns": [
+                        {
+                            "key": "value",
+                            "header": "Amount",
+                            "source": "field",
+                            "field": "value",
+                            "default": None,
+                        },
+                        {
+                            "key": "name",
+                            "header": "Customer",
+                            "source": "field",
+                            "field": "name",
+                            "default": None,
+                        },
+                    ],
+                }
+            ],
+            "export_columns": [
+                {
+                    "key": "value",
+                    "header": "Value",
+                    "source": "field",
+                    "field": "value",
+                    "default": None,
+                },
+                {
+                    "key": "name",
+                    "header": "Name",
+                    "source": "field",
+                    "field": "name",
+                    "default": None,
+                },
+            ],
+            "fallback_to_default": True,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    async with SessionLocal() as session:
+        for index, pattern in enumerate((None, "invoice"), start=1):
+            session.add(
+                Payment(
+                    listener_id=uuid.UUID(listener["id"]),
+                    update_id=index,
+                    message_id=index,
+                    item_index=0,
+                    received_at=datetime.now(UTC),
+                    value=Decimal("100"),
+                    currency="SYP",
+                    kind="payment",
+                    name=f"Row {index}",
+                    description="invoice",
+                    month=10,
+                    source="cash",
+                    pattern_name=pattern,
+                )
+            )
+        await session.commit()
+
+    export = await client.get(f"/api/listeners/{listener['id']}/payments/export.xlsx")
+    assert export.status_code == 200
+    workbook = load_workbook(BytesIO(export.content))
+    assert workbook.sheetnames == ["Default", "invoice"]
+    assert [cell.value for cell in workbook["Default"][1]] == ["Value", "Name"]
+    assert [cell.value for cell in workbook["invoice"][1]] == ["Amount", "Customer"]
+
+
 async def test_delete_log_removes_its_payments(client: AsyncClient):
     await create_user(client)
     listener = await create_listener(client, bot_token("G"))

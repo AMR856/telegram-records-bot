@@ -1,7 +1,9 @@
 from app.services.pattern_engine import (
     PatternError,
     compile_patterns,
+    merge_export_columns,
     parse_pattern_lines,
+    pattern_export_columns,
     resolve_row_cells,
 )
 
@@ -28,6 +30,7 @@ def test_simple_pattern_parses_arabic_digits_and_description():
     assert payment.name == "فاتورة نجارة"
     assert payment.description == "فاتورة نجارة"
     assert payment.currency == "SYP"
+    assert payment.pattern_name == "invoice"
 
 
 def test_custom_column_targets_and_defaults():
@@ -119,6 +122,95 @@ def test_first_matching_pattern_wins_and_unmatched_lines_are_reported():
     assert len(result.payments) == 1
     assert result.payments[0].description == ""
     assert result.unmatched_lines == ["not a payment"]
+
+
+def test_compiled_pattern_keeps_its_own_export_columns():
+    columns = [
+        {"key": "value", "header": "Amount", "source": "field", "field": "value"},
+        {"key": "wood", "header": "Wood", "source": "custom"},
+    ]
+    patterns = [
+        {
+            "name": "wood invoice",
+            "template": "{amount} {wood}",
+            "fields": [
+                {"placeholder": "amount", "target": "value", "type": "number"},
+                {"placeholder": "wood", "target": "wood", "type": "text"},
+            ],
+            "export_columns": columns,
+        }
+    ]
+
+    compiled = compile_patterns(patterns)
+
+    assert compiled[0].export_columns == columns
+
+
+def test_pattern_own_columns_are_used_when_mapping_targets():
+    profile_columns = [
+        {"key": "total", "header": "Total", "source": "field", "field": "value"},
+        {"key": "name", "header": "Name", "source": "field", "field": "name"},
+    ]
+    patterns = [
+        {
+            "name": "profile targets",
+            "template": "{total} to {name}",
+            "fields": [
+                {"placeholder": "total", "target": "total", "type": "number"},
+                {"placeholder": "name", "target": "name", "type": "text"},
+            ],
+        },
+        {
+            "name": "own targets",
+            "template": "{total} paid",
+            "fields": [
+                {"placeholder": "total", "target": "total", "type": "number"},
+            ],
+            "export_columns": [
+                {
+                    "key": "value",
+                    "header": "Value",
+                    "source": "field",
+                    "field": "value",
+                }
+            ],
+        },
+    ]
+
+    result = parse_pattern_lines(
+        "100 to Ali\n200 paid",
+        patterns,
+        export_columns=profile_columns,
+    )
+
+    assert len(result.payments) == 1
+    assert result.payments[0].pattern_name == "profile targets"
+    assert result.payments[0].value == 100
+    assert result.errors == ["own targets: no value was captured"]
+
+
+def test_pattern_export_columns_helper_only_returns_own_columns():
+    patterns = [
+        {"name": "with columns", "export_columns": [{"key": "wood"}]},
+        {"name": "without columns", "export_columns": []},
+    ]
+
+    assert pattern_export_columns(patterns) == {
+        "with columns": [{"key": "wood"}]
+    }
+
+
+def test_merge_export_columns_appends_only_new_keys():
+    base = [{"key": "value", "header": "Value"}]
+    extras = [
+        [{"key": "value", "header": "Amount"}, {"key": "wood", "header": "Wood"}],
+        [{"key": "wood", "header": "Wood 2"}, {"key": "phone", "header": "Phone"}],
+    ]
+
+    merged = merge_export_columns(base, extras)
+
+    assert [column["key"] for column in merged] == ["value", "wood", "phone"]
+    assert merged[0]["header"] == "Value"
 
 
 def test_invalid_template_reports_error():

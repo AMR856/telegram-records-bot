@@ -115,6 +115,7 @@ class PaymentData:
     currency: str = "SYP"
     kind: str = "payment"
     extra: dict[str, str] = field(default_factory=dict)
+    pattern_name: str | None = None
 
 
 class MessageParser:
@@ -476,7 +477,6 @@ class MessageParser:
     def _extract_description(self, text):
         text = MONTH_RE.sub(" ", text)
         text = AMOUNT_RE.sub(" ", text)
-        text = text.replace("تسديد", " ")
         text = text.replace("(", " ").replace(")", " ")
         parts = re.split(r"\s*\+\s*|[،,]", text)
         labels = []

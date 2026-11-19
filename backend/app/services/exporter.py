@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
@@ -5,6 +6,7 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
 
 from app.models.payment import Payment
 from app.services.pattern_engine import default_export_columns, resolve_row_value
@@ -12,6 +14,12 @@ from app.services.pattern_engine import default_export_columns, resolve_row_valu
 HEADERS = ["Date", "Value", "Currency", "Name", "Description", "Month", "Source", "Type"]
 
 DANGEROUS_PREFIXES = ("=", "+", "-", "@")
+
+DEFAULT_PATTERN_LABEL = "Default"
+
+SHEET_TITLE_INVALID_RE = re.compile(r"[\\/*?:\[\]\x00-\x1f]")
+SHEET_TITLE_WHITESPACE_RE = re.compile(r"\s+")
+MAX_SHEET_TITLE_LENGTH = 31
 
 COLUMN_WIDTHS = {
     "date": 20,
@@ -47,6 +55,7 @@ def _excel_datetime(value: datetime | None) -> datetime | None:
 def payment_to_row(payment: Payment) -> dict[str, Any]:
     return {
         "date": payment.message_date or payment.received_at,
+        "pattern": payment.pattern_name,
         "value": float(payment.value),
         "currency": payment.currency or "SYP",
         "name": payment.name,
@@ -65,18 +74,45 @@ def _column_width(column: dict[str, Any]) -> int:
     return 24
 
 
-def build_rows_workbook(
+def _sheet_title(name: str | None, used: set[str]) -> str:
+    base = (name or DEFAULT_PATTERN_LABEL).strip()
+    base = SHEET_TITLE_INVALID_RE.sub(" ", base)
+    base = SHEET_TITLE_WHITESPACE_RE.sub(" ", base).strip(" '")
+    base = base[:MAX_SHEET_TITLE_LENGTH] or DEFAULT_PATTERN_LABEL
+
+    candidate = base
+    counter = 2
+    while candidate.casefold() in used:
+        suffix = f" ({counter})"
+        candidate = f"{base[: MAX_SHEET_TITLE_LENGTH - len(suffix)].rstrip()}{suffix}"
+        counter += 1
+
+    used.add(candidate.casefold())
+    return candidate
+
+
+def _pattern_buckets(rows: list[dict[str, Any]]) -> list[tuple[str | None, list[dict[str, Any]]]]:
+    buckets: dict[str | None, list[dict[str, Any]]] = {}
+    for row in rows:
+        raw_pattern = row.get("pattern")
+        pattern = str(raw_pattern).strip() if raw_pattern is not None else ""
+        key = pattern or None
+        buckets.setdefault(key, []).append(row)
+
+    ordered: list[tuple[str | None, list[dict[str, Any]]]] = []
+    if None in buckets:
+        ordered.append((None, buckets.pop(None)))
+    ordered.extend(buckets.items())
+    return ordered
+
+
+def _write_sheet(
+    sheet: Worksheet,
     rows: list[dict[str, Any]],
-    columns: list[dict[str, Any]] | None = None,
-) -> bytes:
-    columns = columns or default_export_columns()
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Payments"
-
-    header_fill = PatternFill("solid", fgColor="0F766E")
-    header_font = Font(bold=True, color="FFFFFF")
-
+    columns: list[dict[str, Any]],
+    header_fill: PatternFill,
+    header_font: Font,
+) -> None:
     for index, column in enumerate(columns, start=1):
         cell = sheet.cell(row=1, column=index, value=column.get("header") or column["key"])
         cell.fill = header_fill
@@ -109,6 +145,28 @@ def build_rows_workbook(
     sheet.auto_filter.ref = f"A1:{last_column}{max(sheet.max_row, 1)}"
     sheet.sheet_view.rightToLeft = False
 
+
+def build_rows_workbook(
+    rows: list[dict[str, Any]],
+    columns: list[dict[str, Any]] | None = None,
+    pattern_columns: dict[str, list[dict[str, Any]]] | None = None,
+) -> bytes:
+    columns = columns or default_export_columns()
+    pattern_columns = pattern_columns or {}
+    workbook = Workbook()
+
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    buckets = _pattern_buckets(rows) or [(None, [])]
+    used_titles: set[str] = set()
+    for index, (pattern, bucket_rows) in enumerate(buckets):
+        title = _sheet_title(pattern, used_titles)
+        sheet = workbook.active if index == 0 else workbook.create_sheet()
+        sheet.title = title
+        sheet_columns = (pattern_columns.get(pattern) if pattern else None) or columns
+        _write_sheet(sheet, bucket_rows, sheet_columns, header_fill, header_font)
+
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -117,5 +175,10 @@ def build_rows_workbook(
 def build_payments_workbook(
     payments: list[Payment],
     columns: list[dict[str, Any]] | None = None,
+    pattern_columns: dict[str, list[dict[str, Any]]] | None = None,
 ) -> bytes:
-    return build_rows_workbook([payment_to_row(payment) for payment in payments], columns)
+    return build_rows_workbook(
+        [payment_to_row(payment) for payment in payments],
+        columns,
+        pattern_columns,
+    )

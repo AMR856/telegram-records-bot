@@ -69,6 +69,7 @@ class CompiledPattern:
     enabled: bool
     regex: re.Pattern[str]
     group_map: dict[str, dict[str, Any]]
+    export_columns: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -119,6 +120,7 @@ def _compile_pattern(pattern: dict[str, Any]) -> CompiledPattern:
     fields = pattern.get("fields") or []
     defaults = pattern.get("defaults") or {}
     enabled = bool(pattern.get("enabled", True))
+    raw_columns = pattern.get("export_columns") or []
 
     if not template.strip():
         raise PatternError(f"{name}: template is empty")
@@ -126,6 +128,8 @@ def _compile_pattern(pattern: dict[str, Any]) -> CompiledPattern:
         raise PatternError(f"{name}: at least one placeholder is required")
     if not isinstance(defaults, dict):
         raise PatternError(f"{name}: defaults must be an object")
+    if not isinstance(raw_columns, list):
+        raise PatternError(f"{name}: export columns must be a list")
 
     field_by_placeholder: dict[str, dict[str, Any]] = {}
     for raw_field in fields:
@@ -215,6 +219,9 @@ def _compile_pattern(pattern: dict[str, Any]) -> CompiledPattern:
         enabled=enabled,
         regex=regex,
         group_map=group_map,
+        export_columns=[
+            dict(column) for column in raw_columns if isinstance(column, dict)
+        ],
     )
 
 
@@ -354,6 +361,7 @@ def _payment_from_match(
         currency=currency,
         kind=kind,
         extra=extra,
+        pattern_name=compiled.name[:100],
     )
 
 
@@ -392,13 +400,16 @@ def parse_compiled_lines(
         result.unmatched_lines = [line for line in normalize_text(text).split("\n") if line.strip()]
         return result
 
-    targets = _target_map(export_columns)
+    target_maps = [
+        _target_map(compiled.export_columns or export_columns)
+        for compiled in compiled_patterns
+    ]
     for raw_line in normalize_text(text).split("\n"):
         line = normalize_line(raw_line)
         if not line:
             continue
         matched = False
-        for compiled in compiled_patterns:
+        for compiled, targets in zip(compiled_patterns, target_maps, strict=True):
             match = compiled.regex.fullmatch(line)
             if match is None:
                 continue
@@ -418,6 +429,47 @@ def parse_compiled_lines(
         if not matched:
             result.unmatched_lines.append(line)
     return result
+
+
+def pattern_export_columns(
+    patterns: list[dict[str, Any]] | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Map each pattern name to its own export columns.
+
+    Patterns without explicit columns are omitted so callers can fall back to the
+    profile-level (built-in parser) columns.
+    """
+    mapping: dict[str, list[dict[str, Any]]] = {}
+    for pattern in patterns or []:
+        if not isinstance(pattern, dict):
+            continue
+        name = str(pattern.get("name") or "").strip()
+        columns = pattern.get("export_columns") or []
+        if not name or not isinstance(columns, list):
+            continue
+        cleaned = [dict(column) for column in columns if isinstance(column, dict)]
+        if cleaned:
+            mapping[name] = cleaned
+    return mapping
+
+
+def merge_export_columns(
+    base: list[dict[str, Any]] | None,
+    extras: list[list[dict[str, Any]]] | None,
+) -> list[dict[str, Any]]:
+    """Build a stable union of columns, keeping the first definition per key."""
+    merged = [dict(column) for column in base or [] if isinstance(column, dict)]
+    seen = {str(column.get("key") or "").strip() for column in merged}
+    for columns in extras or []:
+        for column in columns or []:
+            if not isinstance(column, dict):
+                continue
+            key = str(column.get("key") or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(dict(column))
+    return merged
 
 
 def resolve_row_value(row: dict[str, Any], column: dict[str, Any]) -> Any:

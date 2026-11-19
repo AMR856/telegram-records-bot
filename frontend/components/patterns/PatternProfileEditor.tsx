@@ -2,27 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  PlusIcon,
-  TrashIcon,
-} from "@/components/Icons";
+import { PlusIcon, TrashIcon } from "@/components/Icons";
+import { ExportColumnsEditor } from "@/components/patterns/ExportColumnsEditor";
+import { TemplateInput } from "@/components/patterns/TemplateInput";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { useI18n } from "@/lib/i18n-context";
 import {
+  CANONICAL_TARGETS,
   defaultColumns,
   extractPlaceholders,
-  fieldKeysFor,
   fieldLabel,
   guessField,
   hasBalancedBraces,
-  nextCustomKey,
   nextNumberedName,
   patternTypeLabel,
-  starterColumn,
   starterPattern,
   targetOptions,
 } from "@/lib/patterns";
@@ -38,6 +33,25 @@ import type {
 
 const DEFAULT_SAMPLE =
   "550 فاتورة نجارة\n1350 عمرو محمد مهدي النص تسديد شهر 11";
+
+function renamePatternTargets(
+  pattern: PatternDefinition,
+  oldKey: string,
+  newKey: string,
+): PatternDefinition {
+  return {
+    ...pattern,
+    fields: pattern.fields.map((field) =>
+      field.target === oldKey ? { ...field, target: newKey } : field,
+    ),
+    defaults: Object.fromEntries(
+      Object.entries(pattern.defaults).map(([target, value]) => [
+        target === oldKey ? newKey : target,
+        value,
+      ]),
+    ),
+  };
+}
 
 type EditorProps = {
   initial: ParserProfile | null;
@@ -58,15 +72,22 @@ export function PatternProfileEditor({
   const fallbackName =
     defaultName ?? `${dict.profilesDefaultName} 1`;
   const [name, setName] = useState(initial?.name ?? fallbackName);
-  const [patterns, setPatterns] = useState<PatternDefinition[]>(() => {
-    if (initial) return initial.patterns.map((pattern) => ({ ...pattern }));
-    return [starterPattern(dict)];
-  });
   const [columns, setColumns] = useState<ExportColumn[]>(() => {
     if (initial?.export_columns?.length) {
       return initial.export_columns.map((column) => ({ ...column }));
     }
     return defaultColumns(kind, dict);
+  });
+  const [patterns, setPatterns] = useState<PatternDefinition[]>(() => {
+    if (initial) {
+      return initial.patterns.map((pattern) => ({
+        ...pattern,
+        export_columns: (pattern.export_columns ?? []).map((column) => ({
+          ...column,
+        })),
+      }));
+    }
+    return [starterPattern(dict, columns)];
   });
   const [fallback, setFallback] = useState(initial?.fallback_to_default ?? true);
   const [sample, setSample] = useState(DEFAULT_SAMPLE);
@@ -80,8 +101,18 @@ export function PatternProfileEditor({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const targets = useMemo(() => targetOptions(columns, dict), [columns, dict]);
-  const fields = useMemo(() => fieldKeysFor(kind), [kind]);
+  const templateSuggestions = useMemo(
+    () =>
+      // Only suggest keys the pattern engine can capture into payment fields.
+      CANONICAL_TARGETS.map((key) => ({
+        key,
+        label: fieldLabel(key, dict),
+      })),
+    [dict],
+  );
+
+  const columnsFor = (pattern: PatternDefinition): ExportColumn[] =>
+    pattern.export_columns?.length ? pattern.export_columns : columns;
 
   useEffect(() => {
     if (!initial) setName(fallbackName);
@@ -145,7 +176,7 @@ export function PatternProfileEditor({
         const nextFields = names.map(
           (placeholder) =>
             pattern.fields.find((field) => field.placeholder === placeholder) ??
-            guessField(placeholder, columns, dict),
+            guessField(placeholder, columnsFor(pattern), dict),
         );
         return { ...pattern, template, fields: nextFields };
       }),
@@ -174,7 +205,7 @@ export function PatternProfileEditor({
     setPatterns((current) => [
       ...current,
       {
-        ...starterPattern(dict),
+        ...starterPattern(dict, columns),
         name: nextNumberedName(
           dict.patternsDefaultName,
           current.map((pattern) => pattern.name),
@@ -187,7 +218,9 @@ export function PatternProfileEditor({
     setPatterns((current) =>
       current.map((pattern, position) => {
         if (position !== patternIndex) return pattern;
-        const target = targets.find((option) => !(option.value in pattern.defaults));
+        const target = targetOptions(columnsFor(pattern), dict).find(
+          (option) => !(option.value in pattern.defaults),
+        );
         if (!target) return pattern;
         return {
           ...pattern,
@@ -243,79 +276,37 @@ export function PatternProfileEditor({
     );
   };
 
-  const updateColumn = (index: number, patch: Partial<ExportColumn>) => {
-    setColumns((current) =>
-      current.map((column, position) =>
-        position === index ? { ...column, ...patch } : column,
+  const renameDefaultTarget = (oldKey: string, newKey: string) => {
+    setPatterns((current) =>
+      current.map((pattern) =>
+        pattern.export_columns?.length
+          ? pattern
+          : renamePatternTargets(pattern, oldKey, newKey),
       ),
     );
   };
 
-  const changeColumnSource = (index: number, source: ExportColumn["source"]) => {
-    setColumns((current) =>
-      current.map((column, position) => {
-        if (position !== index) return column;
-        if (source === "field") {
-          const field = column.field ?? fields[0] ?? "value";
-          return { ...column, source, field, key: field };
-        }
-        return {
-          ...column,
-          source,
-          field: null,
-          key: column.key || nextCustomKey(current),
-        };
-      }),
-    );
-  };
-
-  const changeColumnField = (index: number, field: string) => {
-    setColumns((current) =>
-      current.map((column, position) =>
-        position === index ? { ...column, field, key: field } : column,
+  const renameOwnedTarget = (
+    patternIndex: number,
+    oldKey: string,
+    newKey: string,
+  ) => {
+    setPatterns((current) =>
+      current.map((pattern, position) =>
+        position === patternIndex
+          ? renamePatternTargets(pattern, oldKey, newKey)
+          : pattern,
       ),
     );
   };
 
-  const changeColumnKey = (index: number, key: string) => {
-    const oldKey = columns[index]?.key;
-    setColumns((current) =>
-      current.map((column, position) =>
-        position === index ? { ...column, key } : column,
-      ),
-    );
-    if (!oldKey || oldKey === key) return;
-    setPatterns((patterns) =>
-      patterns.map((pattern) => ({
-        ...pattern,
-        fields: pattern.fields.map((field) =>
-          field.target === oldKey ? { ...field, target: key } : field,
-        ),
-        defaults: Object.fromEntries(
-          Object.entries(pattern.defaults).map(([target, value]) => [
-            target === oldKey ? key : target,
-            value,
-          ]),
-        ),
-      })),
-    );
+  const useDefaultColumns = (patternIndex: number) => {
+    updatePattern(patternIndex, { export_columns: [] });
   };
 
-  const addColumn = () => {
-    setColumns((current) => [...current, starterColumn(current, dict)]);
-  };
-
-  const removeColumn = (index: number) => {
-    setColumns((current) => current.filter((_, position) => position !== index));
-  };
-
-  const moveColumn = (index: number, direction: -1 | 1) => {
-    setColumns((current) => {
-      const target = index + direction;
-      if (target < 0 || target >= current.length) return current;
-      const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
+  const customizeColumns = (patternIndex: number) => {
+    updatePattern(patternIndex, {
+      export_columns: columns.map((column) => ({ ...column })),
     });
   };
 
@@ -404,7 +395,13 @@ export function PatternProfileEditor({
           </div>
         ) : (
           <div className="mt-4 space-y-4">
-            {patterns.map((pattern, patternIndex) => (
+            {patterns.map((pattern, patternIndex) => {
+              const patternColumns = pattern.export_columns ?? [];
+              const effectiveColumns = patternColumns.length
+                ? patternColumns
+                : columns;
+              const patternTargets = targetOptions(effectiveColumns, dict);
+              return (
               <div
                 key={patternIndex}
                 className="rounded-xl border border-stone-200 bg-stone-50/40 p-4"
@@ -449,15 +446,13 @@ export function PatternProfileEditor({
 
                 <div className="mt-3">
                   <label className="label">{dict.patternsTemplate}</label>
-                  <input
-                    className="input font-mono text-sm"
+                  <TemplateInput
+                    id={`pattern-template-${patternIndex}`}
                     value={pattern.template}
-                    maxLength={1000}
-                    onChange={(event) =>
-                      updateTemplate(patternIndex, event.target.value)
-                    }
-                    placeholder="{amount} {description}"
-                    dir="auto"
+                    onChange={(template) => updateTemplate(patternIndex, template)}
+                    suggestions={templateSuggestions}
+                    placeholder="{value} {description}"
+                    noMatchesLabel={dict.patternsNoSuggestions}
                   />
                   <p className="mt-1.5 text-xs text-stone-400">
                     {dict.patternsTemplateHint}
@@ -487,10 +482,12 @@ export function PatternProfileEditor({
                             })
                           }
                         >
-                          {!targets.some((option) => option.value === field.target) ? (
+                          {!patternTargets.some(
+                            (option) => option.value === field.target,
+                          ) ? (
                             <option value={field.target}>{field.target}</option>
                           ) : null}
-                          {targets.map((option) => (
+                          {patternTargets.map((option) => (
                             <option key={option.value} value={option.value}>
                               {option.label}
                             </option>
@@ -566,10 +563,12 @@ export function PatternProfileEditor({
                               )
                             }
                           >
-                            {!targets.some((option) => option.value === target) ? (
+                            {!patternTargets.some(
+                              (option) => option.value === target,
+                            ) ? (
                               <option value={target}>{target}</option>
                             ) : null}
-                            {targets.map((option) => (
+                            {patternTargets.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
@@ -638,162 +637,72 @@ export function PatternProfileEditor({
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      <div className="card p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-stone-900">
-              {dict.patternsColumns}
-            </h2>
-            <p className="mt-1 text-sm text-stone-500">{dict.patternsColumnsHint}</p>
-          </div>
-          <button type="button" className="btn btn-secondary h-9 text-xs" onClick={addColumn}>
-            <PlusIcon className="h-4 w-4" />
-            {dict.patternsAddColumn}
-          </button>
-        </div>
-
-        {columns.length === 0 ? (
-          <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            {dict.patternsNoColumns}
-          </p>
-        ) : (
-          <div className="mt-4 space-y-2">
-            {columns.map((column, index) => (
-              <div
-                key={index}
-                className="grid gap-2 rounded-xl border border-stone-200 p-3 lg:grid-cols-[minmax(130px,1fr)_minmax(110px,0.8fr)_150px_auto] lg:items-end"
-              >
-                <div>
-                  <label className="label text-xs">{dict.patternsColumnHeader}</label>
-                  <input
-                    className="input h-9 py-1.5 text-xs"
-                    value={column.header}
-                    maxLength={100}
-                    onChange={(event) =>
-                      updateColumn(index, { header: event.target.value })
-                    }
-                    dir="auto"
-                  />
-                </div>
-
-                <div>
-                  <label className="label text-xs">{dict.patternsColumnSource}</label>
-                  <select
-                    className="input h-9 py-1.5 text-xs"
-                    value={column.source}
-                    onChange={(event) =>
-                      changeColumnSource(
-                        index,
-                        event.target.value as ExportColumn["source"],
-                      )
-                    }
-                  >
-                    <option value="field">{dict.patternsSourceField}</option>
-                    <option value="custom">{dict.patternsSourceCustom}</option>
-                    <option value="constant">{dict.patternsSourceConstant}</option>
-                  </select>
-                </div>
-
-                {column.source === "field" ? (
-                  <div>
-                    <label className="label text-xs">{dict.patternsColumnField}</label>
-                    <select
-                      className="input h-9 py-1.5 text-xs"
-                      value={column.field ?? ""}
-                      onChange={(event) =>
-                        changeColumnField(index, event.target.value)
-                      }
-                    >
-                      {fields.map((field) => (
-                        <option key={field} value={field}>
-                          {fieldLabel(field, dict)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : column.source === "custom" ? (
-                  <div>
-                    <label className="label text-xs">{dict.patternsColumnKey}</label>
-                    <input
-                      className="input h-9 py-1.5 font-mono text-xs"
-                      value={column.key}
-                      maxLength={100}
-                      onChange={(event) =>
-                        changeColumnKey(index, event.target.value)
-                      }
-                      dir="ltr"
-                    />
+                {patternColumns.length === 0 ? (
+                  <div className="mt-4 rounded-lg border border-stone-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-stone-700">
+                          {dict.patternsPatternColumns}
+                        </p>
+                        <p className="mt-0.5 text-xs text-stone-400">
+                          {dict.patternsInheritColumns}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-8 px-2.5 text-xs"
+                        onClick={() => customizeColumns(patternIndex)}
+                      >
+                        {dict.patternsCustomizeColumns}
+                      </button>
+                    </div>
                   </div>
                 ) : (
-                  <div>
-                    <label className="label text-xs">{dict.patternsColumnKey}</label>
-                    <input
-                      className="input h-9 py-1.5 font-mono text-xs"
-                      value={column.key}
-                      maxLength={100}
-                      onChange={(event) =>
-                        changeColumnKey(index, event.target.value)
+                  <div className="mt-4 rounded-lg border border-stone-200 bg-white p-3">
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="btn btn-ghost h-8 px-2.5 text-xs"
+                        onClick={() => useDefaultColumns(patternIndex)}
+                      >
+                        {dict.patternsUseDefaultColumns}
+                      </button>
+                    </div>
+                    <ExportColumnsEditor
+                      compact
+                      idPrefix={`pattern-${patternIndex}`}
+                      kind={kind}
+                      columns={patternColumns}
+                      onChange={(next) =>
+                        updatePattern(patternIndex, { export_columns: next })
                       }
-                      dir="ltr"
+                      onKeyRename={(oldKey, newKey) =>
+                        renameOwnedTarget(patternIndex, oldKey, newKey)
+                      }
+                      title={dict.patternsPatternColumns}
+                      hint={dict.patternsPatternColumnsHint}
+                      emptyLabel={dict.patternsNoColumns}
                     />
                   </div>
                 )}
-
-                <div className="flex items-end gap-1">
-                  <button
-                    type="button"
-                    className="btn btn-ghost h-9 px-2"
-                    onClick={() => moveColumn(index, -1)}
-                    disabled={index === 0}
-                    title={dict.patternsMoveUp}
-                  >
-                    <ChevronUpIcon className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost h-9 px-2"
-                    onClick={() => moveColumn(index, 1)}
-                    disabled={index === columns.length - 1}
-                    title={dict.patternsMoveDown}
-                  >
-                    <ChevronDownIcon className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost h-9 px-2 text-rose-600 hover:bg-rose-50"
-                    onClick={() => removeColumn(index)}
-                    title={dict.patternsRemoveColumn}
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="lg:col-span-2">
-                  <label className="label text-xs">{dict.patternsColumnDefault}</label>
-                  <input
-                    className="input h-9 py-1.5 text-xs"
-                    value={column.default ?? ""}
-                    maxLength={500}
-                    onChange={(event) =>
-                      updateColumn(index, {
-                        default: event.target.value || null,
-                      })
-                    }
-                    placeholder={dict.patternsColumnDefault}
-                    dir="auto"
-                  />
-                </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+
+      <ExportColumnsEditor
+        idPrefix="profile"
+        kind={kind}
+        columns={columns}
+        onChange={setColumns}
+        onKeyRename={renameDefaultTarget}
+        title={dict.patternsColumns}
+        hint={dict.patternsColumnsHint}
+        emptyLabel={dict.patternsNoColumns}
+      />
 
       <div className="card p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -826,36 +735,66 @@ export function PatternProfileEditor({
 
         {preview ? (
           <div className="mt-4 space-y-3">
-            <div className="overflow-x-auto rounded-xl border border-stone-200">
-              {preview.rows.length === 0 ? (
-                <p className="px-4 py-6 text-center text-sm text-stone-500">
-                  {dict.patternsPreviewNoRows}
-                </p>
-              ) : (
-                <table className="w-full min-w-[640px] text-start text-xs">
-                  <thead>
-                    <tr className="border-b border-stone-200 bg-stone-50 text-[11px] uppercase tracking-wide text-stone-400">
-                      {preview.columns.map((column) => (
-                        <th key={column.key} className="px-3 py-2 text-start font-semibold">
-                          {column.header}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {preview.rows.map((row, index) => (
-                      <tr key={index}>
-                        {row.cells.map((cell, cellIndex) => (
-                          <td key={cellIndex} className="whitespace-nowrap px-3 py-2 text-stone-600">
-                            {cell || "â€”"}
-                          </td>
+            {preview.rows.length === 0 ? (
+              <div className="rounded-xl border border-stone-200 px-4 py-6 text-center text-sm text-stone-500">
+                {dict.patternsPreviewNoRows}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {(preview.groups?.length
+                  ? preview.groups
+                  : [
+                      {
+                        pattern: null,
+                        columns: preview.columns,
+                        rows: preview.rows,
+                      },
+                    ]
+                ).map((group, groupIndex) => (
+                  <div
+                    key={`${group.pattern ?? "default"}-${groupIndex}`}
+                    className="overflow-x-auto rounded-xl border border-stone-200"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-stone-200 bg-stone-50 px-3 py-2">
+                      <span className="text-xs font-semibold text-stone-700">
+                        {group.pattern ?? dict.patternsDefaultSheet}
+                      </span>
+                      <span className="text-[11px] text-stone-400">
+                        {dict.patternsPreviewRows}
+                      </span>
+                    </div>
+                    <table className="w-full min-w-[640px] text-start text-xs">
+                      <thead>
+                        <tr className="border-b border-stone-200 bg-stone-50 text-[11px] uppercase tracking-wide text-stone-400">
+                          {group.columns.map((column) => (
+                            <th
+                              key={column.key}
+                              className="px-3 py-2 text-start font-semibold"
+                            >
+                              {column.header}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-100">
+                        {group.rows.map((row, index) => (
+                          <tr key={index}>
+                            {row.cells.map((cell, cellIndex) => (
+                              <td
+                                key={cellIndex}
+                                className="whitespace-nowrap px-3 py-2 text-stone-600"
+                              >
+                                {cell || "—"}
+                              </td>
+                            ))}
+                          </tr>
                         ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {preview.unmatched_lines.length > 0 ? (
               <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
