@@ -468,7 +468,7 @@ export function PatternProfileEditor({
                     {pattern.fields.map((field, fieldIndex) => (
                       <div
                         key={field.placeholder}
-                        className="grid gap-2 rounded-lg border border-stone-200 bg-white p-2.5 sm:grid-cols-[minmax(100px,0.8fr)_minmax(150px,1.2fr)_130px_auto] sm:items-center"
+                        className="grid gap-2 rounded-lg border border-stone-200 bg-white p-2.5 sm:grid-cols-[minmax(100px,0.8fr)_minmax(150px,1.2fr)_130px] sm:items-center"
                       >
                         <code className="truncate rounded bg-stone-100 px-2 py-1 text-xs text-stone-600" dir="ltr">
                           {"{" + field.placeholder + "}"}
@@ -510,19 +510,6 @@ export function PatternProfileEditor({
                             ),
                           )}
                         </select>
-                        <label className="flex items-center gap-1.5 text-xs text-stone-600">
-                          <input
-                            type="checkbox"
-                            className="h-3.5 w-3.5 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
-                            checked={field.required}
-                            onChange={(event) =>
-                              updateField(patternIndex, fieldIndex, {
-                                required: event.target.checked,
-                              })
-                            }
-                          />
-                          {dict.patternsRequired}
-                        </label>
                       </div>
                     ))}
                   </div>

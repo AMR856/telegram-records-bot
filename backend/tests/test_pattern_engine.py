@@ -124,6 +124,89 @@ def test_first_matching_pattern_wins_and_unmatched_lines_are_reported():
     assert result.unmatched_lines == ["not a payment"]
 
 
+def test_longest_pattern_is_tried_first():
+    patterns = [
+        {
+            "name": "generic",
+            "template": "{amount} {name}",
+            "fields": [
+                {"placeholder": "amount", "target": "value", "type": "number"},
+                {"placeholder": "name", "target": "name", "type": "text"},
+            ],
+        },
+        {
+            "name": "default invoice",
+            "template": "{amount} {name} النص تسديد شهر {month}",
+            "fields": [
+                {"placeholder": "amount", "target": "value", "type": "number"},
+                {"placeholder": "name", "target": "name", "type": "text"},
+                {"placeholder": "month", "target": "month", "type": "month"},
+            ],
+        },
+    ]
+
+    result = parse_pattern_lines("1350 عمرو محمد مهدي النص تسديد شهر 11", patterns)
+
+    assert result.errors == []
+    assert len(result.payments) == 1
+    assert result.payments[0].pattern_name == "default invoice"
+    assert result.payments[0].name == "عمرو محمد مهدي"
+    assert result.payments[0].month == 11
+
+
+def test_currency_placeholder_is_required_when_in_template():
+    patterns = [
+        {
+            "name": "with currency",
+            "template": "{amount} {currency} {description}",
+            "fields": [
+                {"placeholder": "amount", "target": "value", "type": "number"},
+                {"placeholder": "currency", "target": "currency", "type": "text"},
+                {"placeholder": "description", "target": "description", "type": "text"},
+            ],
+        }
+    ]
+
+    result = parse_pattern_lines(
+        "1350 محمد عصام تسديد شهر 11\n1350 عمرو محمد مهدي النص تسديد شهر 11",
+        patterns,
+    )
+
+    assert result.payments == []
+    assert result.unmatched_lines == [
+        "1350 محمد عصام تسديد شهر 11",
+        "1350 عمرو محمد مهدي النص تسديد شهر 11",
+    ]
+    assert result.errors == []
+
+
+def test_currency_placeholder_accepts_currency_markers():
+    patterns = [
+        {
+            "name": "with currency",
+            "template": "{amount} {currency} {description}",
+            "fields": [
+                {"placeholder": "amount", "target": "value", "type": "number"},
+                {"placeholder": "currency", "target": "currency", "type": "text"},
+                {"placeholder": "description", "target": "description", "type": "text"},
+            ],
+        }
+    ]
+
+    result = parse_pattern_lines(
+        "1350 $ محمد عصام\n1350 ل.س محمد عصام\n1350 ليرة سوري محمد عصام",
+        patterns,
+    )
+
+    assert result.errors == []
+    assert [payment.currency for payment in result.payments] == ["USD", "SYP", "SYP"]
+    assert [payment.description for payment in result.payments] == [
+        "محمد عصام",
+        "محمد عصام",
+        "محمد عصام",
+    ]
+
+
 def test_compiled_pattern_keeps_its_own_export_columns():
     columns = [
         {"key": "value", "header": "Amount", "source": "field", "field": "value"},

@@ -97,7 +97,6 @@ export type PatternField = {
   placeholder: string;
   target: string;
   type: PatternType;
-  required: boolean;
 };
 
 export type PatternDefinition = {

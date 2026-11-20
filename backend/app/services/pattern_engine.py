@@ -31,6 +31,10 @@ NUMBER_GROUP = rf"({AMOUNT_PATTERN})"
 TEXT_GROUP = r"(.+?)"
 WORD_GROUP = r"(\S+)"
 MONTH_GROUP = r"(\d{1,2})"
+CURRENCY_PATTERN = (
+    r"(?:\$|USD|SYP|دولار|ل\.?\s?س|ليرة\s+سوري(?:ة|ه)?|ليرة(?!\s+سوري))"
+)
+CURRENCY_GROUP = rf"({CURRENCY_PATTERN})"
 
 DEFAULT_EXPORT_COLUMNS: list[dict[str, Any]] = [
     {"key": "date", "header": "Date", "source": "field", "field": "date", "default": None},
@@ -150,7 +154,6 @@ def _compile_pattern(pattern: dict[str, Any]) -> CompiledPattern:
             "placeholder": placeholder,
             "target": target,
             "type": field_type,
-            "required": bool(raw_field.get("required", True)),
         }
 
     matches = list(PLACEHOLDER_RE.finditer(template))
@@ -172,28 +175,27 @@ def _compile_pattern(pattern: dict[str, Any]) -> CompiledPattern:
             details.append(f"missing field mapping: {', '.join(sorted(extra))}")
         raise PatternError(f"{name}: {'; '.join(details)}")
 
-    parts: list[str] = []
-    group_map: dict[str, dict[str, Any]] = {}
-    previous_was_placeholder = False
-    group_index = 0
-
-    def add_literal(literal: str) -> None:
-        nonlocal previous_was_placeholder
-        if literal:
-            parts.append(_literal_regex(literal))
-            previous_was_placeholder = False
-
+    literals: list[str] = []
     cursor = 0
     for match in matches:
-        add_literal(template[cursor : match.start()])
+        literals.append(template[cursor : match.start()])
+        cursor = match.end()
+    literals.append(template[cursor:])
+
+    parts: list[str] = []
+    group_map: dict[str, dict[str, Any]] = {}
+    for group_index, match in enumerate(matches):
         placeholder = match.group(1)
         spec = field_by_placeholder[placeholder]
-        if previous_was_placeholder:
+        separator = _literal_regex(literals[group_index])
+        if group_index > 0 and not separator:
             raise PatternError(
                 f"{name}: placeholders '{placeholder}' and the previous one "
                 "need literal text between them"
             )
-        if spec["type"] == "number":
+        if spec["target"] == "currency":
+            group = CURRENCY_GROUP
+        elif spec["type"] == "number":
             group = NUMBER_GROUP
         elif spec["type"] == "month":
             group = MONTH_GROUP
@@ -203,12 +205,11 @@ def _compile_pattern(pattern: dict[str, Any]) -> CompiledPattern:
             is_last = match.end() == len(template)
             group = r"(.+)" if is_last else TEXT_GROUP
         group_name = f"g{group_index}"
-        parts.append(f"(?P<{group_name}>{group[1:-1]})")
+        capture = f"(?P<{group_name}>{group[1:-1]})"
+        parts.append(separator)
+        parts.append(capture)
         group_map[group_name] = dict(spec)
-        group_index += 1
-        previous_was_placeholder = True
-        cursor = match.end()
-    add_literal(template[cursor:])
+    parts.append(_literal_regex(literals[-1]))
 
     regex = re.compile("^" + "".join(parts) + "$", re.IGNORECASE)
     return CompiledPattern(
@@ -295,10 +296,10 @@ def _payment_from_match(
     for group_name, spec in compiled.group_map.items():
         raw = match.group(group_name)
         if raw is None:
-            if spec.get("required", True):
-                raise PatternError(f"{compiled.name}: missing value for {spec['placeholder']}")
             continue
         raw = raw.strip()
+        if not raw:
+            continue
         if spec["type"] == "number":
             try:
                 captured[spec["target"]] = str(parse_amount(raw))
@@ -400,16 +401,21 @@ def parse_compiled_lines(
         result.unmatched_lines = [line for line in normalize_text(text).split("\n") if line.strip()]
         return result
 
+    ordered_patterns = sorted(
+        compiled_patterns,
+        key=lambda compiled: len(compiled.template),
+        reverse=True,
+    )
     target_maps = [
         _target_map(compiled.export_columns or export_columns)
-        for compiled in compiled_patterns
+        for compiled in ordered_patterns
     ]
     for raw_line in normalize_text(text).split("\n"):
         line = normalize_line(raw_line)
         if not line:
             continue
         matched = False
-        for compiled, targets in zip(compiled_patterns, target_maps, strict=True):
+        for compiled, targets in zip(ordered_patterns, target_maps, strict=True):
             match = compiled.regex.fullmatch(line)
             if match is None:
                 continue

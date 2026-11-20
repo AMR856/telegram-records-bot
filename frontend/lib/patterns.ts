@@ -149,33 +149,29 @@ export function guessField(
           : exactTarget === "month"
             ? "month"
             : "text",
-      required:
-        exactTarget === "value" ||
-        exactTarget === "month" ||
-        exactTarget === "name",
     };
   }
 
   if (includesAny(lower, ["amount", "value", "price", "total", "مبلغ", "قيمة", "سعر"])) {
-    return { placeholder, target: "value", type: "number", required: true };
+    return { placeholder, target: "value", type: "number" };
   }
   if (includesAny(lower, ["month", "شهر"])) {
-    return { placeholder, target: "month", type: "month", required: true };
+    return { placeholder, target: "month", type: "month" };
   }
   if (includesAny(lower, ["phone", "هاتف", "جوال", "موبايل"])) {
     const target = customKeys.find((key) => includesAny(key.toLowerCase(), ["phone"])) ??
       customKeys[0];
     if (target) {
-      return { placeholder, target, type: "word", required: false };
+      return { placeholder, target, type: "word" };
     }
   }
   if (includesAny(lower, ["name", "customer", "اسم", "عميل"])) {
-    return { placeholder, target: "name", type: "text", required: true };
+    return { placeholder, target: "name", type: "text" };
   }
   const target = hasTarget("description")
     ? "description"
     : customKeys[0] ?? "description";
-  return { placeholder, target, type: "text", required: false };
+  return { placeholder, target, type: "text" };
 }
 
 export function nextNumberedName(base: string, names: string[]): string {
@@ -194,12 +190,11 @@ export function starterPattern(
     name: `${dict.patternsDefaultName} ${index}`,
     template: "{value} {description}",
     fields: [
-      { placeholder: "value", target: "value", type: "number", required: true },
+      { placeholder: "value", target: "value", type: "number" },
       {
         placeholder: "description",
         target: "description",
         type: "text",
-        required: false,
       },
     ],
     defaults: {},

@@ -20,7 +20,6 @@ class PatternField(BaseModel):
     placeholder: str = Field(min_length=1, max_length=50)
     target: str = Field(min_length=1, max_length=100)
     type: Literal["number", "text", "word", "month"] = "text"
-    required: bool = True
 
     @field_validator("placeholder")
     @classmethod
